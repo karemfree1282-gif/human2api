@@ -1,0 +1,81 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Human2API local REST API",
+    "version": "0.1.0",
+    "description": "Only listen on loopback. Send X-H2A-Token for all API operations. Write workflows require approve:true."
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:8765"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "LocalToken": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-H2A-Token"
+      }
+    }
+  },
+  "paths": {
+    "/api/run/create_invoice": {
+      "post": {
+        "operationId": "run_create_invoice",
+        "summary": "Create and verify a fake invoice in the local sandbox, then download a text receipt",
+        "security": [
+          {
+            "LocalToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "inputs": {
+                    "type": "object",
+                    "properties": {
+                      "customer_name": {
+                        "type": "string",
+                        "description": "Customer to bill"
+                      },
+                      "amount": {
+                        "type": "number",
+                        "description": "Amount in USD"
+                      }
+                    },
+                    "required": [
+                      "customer_name",
+                      "amount"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "approve": {
+                    "type": "boolean",
+                    "description": "Explicit permission to run write workflows"
+                  }
+                },
+                "required": [
+                  "inputs"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Run result"
+          },
+          "400": {
+            "description": "Validation or runtime error"
+          }
+        }
+      }
+    }
+  }
+}

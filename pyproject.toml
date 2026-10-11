@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "human2api"
+version = "0.1.0"
+description = "Record a browser workflow once. Reuse it as a verified CLI, REST API, or MCP tool."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+authors = [{name = "Human2API contributors"}]
+keywords = ["automation", "playwright", "mcp", "agents", "browser", "recording", "open-source"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Framework :: Pytest",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Testing",
+  "Topic :: Internet :: WWW/HTTP :: Browsers",
+]
+dependencies = ["playwright>=1.55,<2"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10", "build>=1,<2", "Pillow>=10,<13", "jsonschema>=4,<5"]
+
+[project.scripts]
+h2a = "human2api.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/karemfree1282-gif/human2api"
+Issues = "https://github.com/karemfree1282-gif/human2api/issues"
+Documentation = "https://github.com/karemfree1282-gif/human2api#readme"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+human2api = ["static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = ["browser: requires locally installed Chromium"]

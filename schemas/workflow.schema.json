@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/karemfree1282-gif/human2api/raw/main/schemas/workflow.schema.json",
+  "title": "Human2API Workflow v1",
+  "description": "Portable, inspectable browser automation file",
+  "type": "object",
+  "required": ["schemaVersion", "name", "description", "startUrl", "steps"],
+  "properties": {
+    "$schema": {"type": "string"},
+    "schemaVersion": {"const": 1},
+    "name": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,62}$"},
+    "description": {"type": "string", "minLength": 1, "maxLength": 300},
+    "startUrl": {"type": "string", "pattern": "^https?://"},
+    "permissions": {"enum": ["read", "write"], "default": "write"},
+    "allowedHosts": {"type": "array", "minItems": 1, "maxItems": 30, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$"}},
+    "inputs": {
+      "type": "object",
+      "maxProperties": 80,
+      "propertyNames": {"pattern": "^[a-z][a-z0-9_]{0,62}$"},
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "type": {"enum": ["string", "number", "boolean"], "default": "string"},
+          "description": {"type": "string", "maxLength": 200},
+          "required": {"type": "boolean", "default": true},
+          "secret": {"type": "boolean", "default": false},
+          "default": {}
+        },
+        "additionalProperties": false,
+        "allOf": [
+          {"if": {"properties": {"secret": {"const": true}}, "required": ["secret"]}, "then": {"not": {"required": ["default"]}}},
+          {"if": {"properties": {"type": {"const": "number"}}, "required": ["type"]}, "then": {"properties": {"default": {"type": "number"}}}},
+          {"if": {"properties": {"type": {"const": "boolean"}}, "required": ["type"]}, "then": {"properties": {"default": {"type": "boolean"}}}}
+        ]
+      }
+    },
+    "steps": {
+      "type": "array", "minItems": 1, "maxItems": 250,
+      "items": {
+        "type": "object",
+        "required": ["action"],
+        "properties": {
+          "action": {"enum": ["click", "fill", "select", "check", "wait", "assert_text", "extract_text", "download", "screenshot", "navigate"]},
+          "selector": {"type": "string", "minLength": 1, "maxLength": 2048},
+          "alternatives": {"type": "array", "maxItems": 8, "items": {"type": "string", "minLength": 1}},
+          "timeoutMs": {"type": "integer", "minimum": 100, "maximum": 120000},
+          "value": {"type": "string"},
+          "checked": {"oneOf": [{"type": "boolean"}, {"type": "string"}]},
+          "text": {"type": "string"},
+          "as": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,62}$"},
+          "url": {"type": "string"},
+          "filename": {"type": "string", "pattern": "^[^./\\\\][^/\\\\]*$", "maxLength": 128}
+        },
+        "additionalProperties": false,
+        "allOf": [
+          {"if": {"properties": {"action": {"enum": ["click", "fill", "select", "check", "wait", "assert_text", "extract_text", "download"]}}, "required": ["action"]}, "then": {"required": ["selector"]}},
+          {"if": {"properties": {"action": {"enum": ["fill", "select"]}}, "required": ["action"]}, "then": {"required": ["value"]}},
+          {"if": {"properties": {"action": {"const": "check"}}, "required": ["action"]}, "then": {"required": ["checked"]}},
+          {"if": {"properties": {"action": {"const": "navigate"}}, "required": ["action"]}, "then": {"required": ["url"]}},
+          {"if": {"properties": {"action": {"const": "assert_text"}}, "required": ["action"]}, "then": {"required": ["text"]}},
+          {"if": {"properties": {"action": {"const": "extract_text"}}, "required": ["action"]}, "then": {"required": ["as"]}}
+        ]
+      }
+    }
+  },
+  "additionalProperties": false
+}

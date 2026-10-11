@@ -1,0 +1,21 @@
+name: Documentation feedback
+description: Report a confusing guide or propose a reproducible example
+labels: [documentation]
+body:
+  - type: input
+    id: page
+    attributes:
+      label: Page or command
+      description: The guide, README section, or command you were following
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What was confusing?
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested fix

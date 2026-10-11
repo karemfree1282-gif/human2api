@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="Human2API local dashboard: record, inspect, and reuse deterministic browser workflows as MCP tools and REST APIs.">
+  <meta name="h2a-token" content="__H2A_LOCAL_TOKEN__">
+  <title>Human2API | Your local automation studio</title>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div class="grain"></div>
+  <div class="shell">
+    <aside class="sidebar" aria-label="Navigation">
+      <a class="brand" href="/" aria-label="Human2API Home"><span class="brand-symbol">h<span class="brand-star">✳</span></span><span>human<span class="brand-muted">2</span>api<small>LOCAL STUDIO</small></span></a>
+      <div class="side-label">WORKSPACE</div>
+      <a class="nav active" href="#workflows"><span class="nav-icon">▦</span> Workflows <span class="nav-counter" id="nav-count">0</span></a>
+      <a class="nav" href="/demo" target="_blank" rel="noreferrer"><span class="nav-icon">◈</span> Demo sandbox <span class="external">↗</span></a>
+      <a class="nav" href="#openapi" id="spec-link"><span class="nav-icon">⌁</span> OpenAPI schema <span class="external">↗</span></a>
+      <div class="sidebar-bottom"><span class="online-dot"></span> Runs on your machine <small>Local only · No account · No telemetry</small></div>
+    </aside>
+    <main class="main" id="workflows">
+      <header class="topbar"><div class="crumb">Workspace <span>/</span> Overview</div><div class="top-right"><span class="pill"><i></i> ENGINE READY</span><span class="avatar">H2</span></div></header>
+      <section class="hero">
+        <div class="eyebrow"><span class="eyebrow-dot">✳</span> OPEN SOURCE AUTOMATION STUDIO <span class="eyebrow-line"></span> v0.1</div>
+        <h1>Teach it once.<br><span>Automate forever.</span></h1>
+        <p>Record a browser task and turn it into a reusable API or an agent-ready MCP tool. Your inputs stay private; your workflows stay yours.</p>
+        <div class="hero-actions"><button class="button button-primary" id="new-record">◉ &nbsp; New recording <span>↗</span></button><a class="button button-soft" href="/demo" target="_blank" rel="noreferrer">Try demo sandbox <span>↗</span></a></div>
+        <div class="hero-art" aria-hidden="true"><div class="orb orb-one"></div><div class="orb orb-two"></div><div class="orb orb-three"></div><div class="orbit-text">HUMAN <span>→</span> WORKFLOW <span>→</span> MCP</div></div>
+      </section>
+      <section class="stats" aria-label="Project metrics">
+        <div class="stat"><span>WORKFLOWS</span><strong id="metric-workflows">—</strong><small>Ready to run</small></div>
+        <div class="stat"><span>RECORDED ACTIONS</span><strong id="metric-actions">—</strong><small>Reproducible steps</small></div>
+        <div class="stat"><span>INTEGRATIONS</span><strong>2 <em>+</em></strong><small>MCP and REST API</small></div>
+      </section>
+      <div class="section-head"><div><div class="eyebrow eyebrow-small">YOUR AUTOMATIONS</div><h2>Workflow library</h2></div><button id="refresh" class="icon-button" title="Refresh workflows" aria-label="Refresh workflows">↻</button></div>
+      <div class="workspace-grid">
+        <div class="workflow-list" id="workflow-list"><p class="empty-state">Loading workflows…</p></div>
+        <div class="details" id="details"><div class="empty-detail"><div class="empty-icon">{ }</div><h3>Select a workflow</h3><p>View its actions, fill inputs, and run it locally.</p></div></div>
+      </div>
+      <section class="terminal" aria-label="Command line quickstart"><div class="terminal-header"><span class="terminal-dots"><i></i><i></i><i></i></span> QUICKSTART <button id="copy-cli" class="terminal-copy">Copy</button></div><pre id="cli-code">pip install -e .
+python -m playwright install chromium
+h2a serve</pre></section>
+      <footer class="footer">Built for builders. Made to be inspected, forked, and improved. <span>Human2API · Apache-2.0</span></footer>
+    </main>
+  </div>
+  <dialog id="recorder-dialog" class="modal"><form id="recorder-form"><div class="modal-heading"><span>● RECORD A WORKFLOW</span><button type="button" class="close" data-close aria-label="Close dialog">×</button></div><h2>Capture your next task.</h2><p>Human2API opens a Chromium window. Click and type naturally, then press Stop &amp; save.</p><label for="record-url">Starting URL</label><input id="record-url" name="url" type="url" placeholder="https://your-app.com" required value="http://127.0.0.1:8765/demo"><label for="record-name">Workflow name</label><input id="record-name" name="name" pattern="[a-z][a-z0-9_]*" maxlength="63" placeholder="create_invoice" required><div class="modal-hint">Form values are never saved; fields become input variables.</div><button class="button button-primary wide" type="submit">Start recording <span>↗</span></button><div id="recorder-feedback" role="status"></div></form></dialog>
+  <div id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

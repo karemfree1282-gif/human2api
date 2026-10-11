@@ -1,0 +1,15 @@
+name: Security questions
+description: Read the security policy before posting. Do not disclose a vulnerability publicly.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not post exploit details, secret values, session tokens, or credentials here.**
+        Please follow the private-reporting process in [SECURITY.md](../../SECURITY.md).
+  - type: checkboxes
+    id: acknowledge
+    attributes:
+      label: Security reporting
+      options:
+        - label: I have read SECURITY.md and will use the private reporting channel for vulnerabilities.
+          required: true
