@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "human2api"
-version = "0.2.1"
+version = "0.2.2"
 description = "Record browser, desktop, and Android tasks. Reuse workflows through CLI, REST and MCP."
 readme = "README.md"
 requires-python = ">=3.10"

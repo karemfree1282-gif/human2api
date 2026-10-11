@@ -30,3 +30,11 @@ Initial alpha release candidate:
 - Added checksum-pinned opt-in installation (`h2a catalog --remote`, `h2a install-remote --approve`).
 - Added public JSON index and an extensive mocked negative-case/integrity test suite.
 - This does not supply signed publisher identity, vetted reviews, or a hosted execution service.
+
+## 0.2.2 — persistent private history and public index UI
+
+- Added local SQLite run journal with bounded retention and restart interruption recovery.
+- Added token-authenticated metadata-only REST API for recent history.
+- Added public read-only community index browser to the dashboard with no auto-installation.
+- Improved unexpected runner-error sanitization, documentation and tests.
+- No physical Android or native-desktop acceptance claims.

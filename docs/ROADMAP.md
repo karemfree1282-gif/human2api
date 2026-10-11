@@ -12,6 +12,7 @@ As of v0.2, this is an **open-source developer preview**. Features below are not
 - CLI, ephemeral-auth loopback REST API and typed MCP tools for all targets
 - Optional local semantic selector healing; explicitly approved AI selector advice via compatible model endpoint
 - Package packing, checksum verification, manual approval installation, local catalog and HTTPS read-only remote index with SHA-256-pinned downloads
+- Metadata-only local SQLite run journal with 30-day retention, plus protected REST history endpoint
 - Self-contained fake invoice demo and CI test suite with mocked device backends
 
 ## Integration validation still needed
@@ -19,7 +20,7 @@ As of v0.2, this is an **open-source developer preview**. Features below are not
 - Real-world Windows/macOS/Linux UX recording and replay; coordinate/keyboard differences; native accessibility selectors
 - Real Android phones across OEM versions; Unicode text, complex app UI, dialogs, multiple display modes
 - Browser multi-tab and iframe scenarios with various modern sites and authenticated flows
-- Fail/retry handling for transient network issues and durable run history
+- Fail/retry handling for transient network issues; history now persists metadata only
 - Test/enable GitHub Pages deployment after GitHub Actions settings and runner availability are confirmed
 - Real-user permission prompts in MCP clients
 

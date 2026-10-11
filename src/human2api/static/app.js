@@ -93,7 +93,7 @@ function drawDetails() {
     event.preventDefault();if(wf.permissions==='write'&&!approval.checked){toast('Approve write actions before running.');return;}
     const args={}; for(const [key,{input,spec}] of Object.entries(inputRefs)){ if(spec.type==='boolean')args[key]=input.checked; else if(spec.type==='number')args[key]=Number(input.value); else if(input.value!=='')args[key]=input.value; }
     try {runButton.disabled=true;output.textContent='Executing '+(wf.target||'browser')+' workflow...';const r=await api('/api/run/'+encodeURIComponent(wf.name),{method:'POST',body:JSON.stringify({inputs:args,approve:approval.checked,healSelectors:heal.checked,aiHeal:ai.checked})});
-      let polls=0;const poll=async()=>{const status=await api('/api/runs/'+r.runId);if(status.state==='running' && polls++<240){setTimeout(poll,500);return;} output.textContent=JSON.stringify(status,null,2);runButton.disabled=false;};await poll();
+      let polls=0;const poll=async()=>{const status=await api('/api/runs/'+r.runId);if(status.state==='running' && polls++<240){setTimeout(poll,500);return;} output.textContent=JSON.stringify(status,null,2);runButton.disabled=false;showHistory();};await poll();
     }catch(err){output.textContent='Error: '+err.message;runButton.disabled=false;}
   });
   body.append(form,output);
@@ -133,14 +133,34 @@ async function updateEngineStatus(){
     if($('android-status')) $('android-status').textContent=p.android.adbInstalled?'ADB installed. Connect an authorized phone':'Install Android platform-tools (ADB)';
   }catch(err){ /* status is informational */ }
 }
-async function showCatalog(){
+async function showCatalog(remote=false){
   const destination=$('catalog-packages');if(!destination)return;
-  try{const catalog=await api('/api/catalog');destination.replaceChildren();
-    if(!catalog.packages.length){destination.append(node('p',{text:'No local workflow packages yet. Create one using: h2a pack create_invoice --output catalog/create_invoice.h2a.zip'}));return;}
-    for(const item of catalog.packages){destination.append(node('article',{className:'catalog-entry'},[node('strong',{text:item.name}),node('small',{text:`${item.target} · ${item.publisher} · checksum verified`}),node('span',{text:item.description})]));}
+  destination.replaceChildren(node('p',{text:remote?'Fetching public workflow index…':'Inspecting local packages…'}));
+  try{const catalog=await api(remote?'/api/catalog/remote':'/api/catalog');destination.replaceChildren();
+    if(!catalog.packages.length){destination.append(node('p',{text:remote?'Public workflow index is empty.':'No local workflow packages yet. Use: h2a pack create_invoice --output catalog/create_invoice.h2a.zip'}));return;}
+    for(const item of catalog.packages){
+      const elements=[node('strong',{text:item.name}),node('small',{text:`${item.target} · ${item.publisher} · ${remote?'SHA-256 pinned':'checksum verified'}`}),node('span',{text:item.description})];
+      if(remote)elements.push(node('code',{text:`h2a install-remote ${item.name} --approve`}));
+      destination.append(node('article',{className:'catalog-entry'},elements));
+    }
   }catch(err){destination.textContent='Could not load catalog: '+err.message;}
 }
-$('catalog-refresh')?.addEventListener('click',showCatalog);
-$('catalog-link')?.addEventListener('click',()=>showCatalog());
+async function showHistory(){
+  const destination=$('history-entries');if(!destination)return;
+  try{const result=await api('/api/history');destination.replaceChildren();
+    if(!result.history.length){destination.append(node('p',{text:'No executions yet. Start a local workflow to see metadata here.'}));return;}
+    for(const record of result.history.slice(0,12)){
+      const ts=new Date(record.createdAt*1000).toLocaleString();
+      const duration=record.durationMs==null?'—':`${record.durationMs} ms`;
+      destination.append(node('article',{className:'catalog-entry'},[node('strong',{text:record.workflow}),node('small',{text:`${record.target} · ${record.state}`}),node('span',{text:`${ts} · ${duration} · ${record.steps} steps`})]));
+    }
+  }catch(err){destination.textContent='Could not load run history: '+err.message;}
+}
+$('catalog-refresh')?.addEventListener('click',()=>showCatalog(false));
+$('catalog-public')?.addEventListener('click',()=>showCatalog(true));
+$('catalog-link')?.addEventListener('click',()=>showCatalog(false));
+$('history-refresh')?.addEventListener('click',showHistory);
+$('history-link')?.addEventListener('click',showHistory);
 updateEngineStatus();
-showCatalog();
+showCatalog(false);
+showHistory();

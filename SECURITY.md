@@ -35,3 +35,7 @@ A malicious page could change the selector target, trick a workflow into clickin
 - **AI selector recovery:** OFF by default. With explicit opt-in, up to 70 element metadata records can leave your machine for the configured OpenAI-compatible endpoint; IDs and aria labels may contain identifying information. The model can only return a CSS selector, checked for a single visible match, and never silently changes source workflows. This feature is not suited to confidential apps without an approved provider/data-policy review.
 - **Community packages:** A `.h2a.zip` has exactly two JSON files. Sha256 guarantees only integrity, **not** author identity or safety. Explicitly review permissions, hosts, and steps prior to installing and running. No executable bundle payloads are allowed.
 - **General:** UI navigation allowlists are not a sandbox for page subresources. Do not expose the loopback REST server via tunneling or reverse proxies. There is no cloud authentication, secret vault, native mobile accessibility service, or signed marketplace in this release.
+
+## Local execution history
+
+The dashboard saves metadata-only SQLite records in `.h2a/history.db` (Git ignored). No run input values, authentication tokens, workflow outputs, screenshots, model prompts or exception texts are written to this journal. It is **not encrypted by the application**; protect the containing device and user account. Recent entries are pruned to 30 days and 1,000 records.

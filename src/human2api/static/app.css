@@ -22,3 +22,6 @@
 .catalog-entry span{color:#c0cadc;font-size:12px}
 .catalog-note{margin-top:18px;font-size:11px}
 @media(max-width:1080px){.platform-grid{grid-template-columns:1fr}.platform-card{min-height:auto}.catalog-header{flex-direction:column;align-items:flex-start}}
+
+.action-pair{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.catalog-entry code{font:10px/1.5 ui-monospace,Consolas,monospace;color:#d5ffe9;overflow-wrap:anywhere}

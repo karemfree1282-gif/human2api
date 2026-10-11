@@ -20,7 +20,7 @@
 
 ---
 
-> **v0.2 development release.** The browser engine has automated local tests and the other platform engines have mocked unit tests, but physical Windows/macOS/Linux app and Android device acceptance tests are not yet complete. This project is **not** advertised as production-ready, a hosted cloud service, or a universal API for every app.
+> **v0.2.2 development release.** The browser engine has automated local tests and the other platform engines have mocked unit tests, but physical Windows/macOS/Linux app and Android device acceptance tests are not yet complete. This project is **not** advertised as production-ready, a hosted cloud service, or a universal API for every app.
 
 ## The problem
 
@@ -167,7 +167,7 @@ h2a verify catalog/create_invoice.h2a.zip
 h2a install catalog/create_invoice.h2a.zip --approve --directory other_workflows
 ```
 
-`.h2a.zip` contains exactly a manifest and workflow JSON. Checksums detect corruption; **they do not establish who published a file**. Nothing executable gets extracted, and overwrite is disallowed. Always inspect third-party workflows and permitted hosts/actions before installing. There is a **local catalog and a public read-only HTTPS index**. It is not a managed marketplace with signed publishers, trust ratings or user accounts. Community registry submission instructions are in [marketplace/README.md](marketplace/README.md).
+`.h2a.zip` contains exactly a manifest and workflow JSON. Checksums detect corruption; **they do not establish who published a file**. Nothing executable gets extracted, and overwrite is disallowed. Always inspect third-party workflows and permitted hosts/actions before installing. The **catalog is local**, not an online hosted marketplace. Community registry submission instructions are in [marketplace/README.md](marketplace/README.md).
 
 ## Local REST API
 
@@ -191,3 +191,9 @@ Apache-2.0. Contributions and tests on real devices are especially welcome. [Con
 ### Public workflow directory (preview)
 
 The repository includes a [read-only community index](marketplace/index.json). Run `h2a catalog --remote` to view metadata; inspect the source before using `h2a install-remote create_invoice --approve`. Download and install both require HTTPS and pinned SHA-256, but publisher identities are **not cryptographically verified**. All remote actions are opt-in.
+
+## Private run history (v0.2.2)
+
+The local dashboard shows recent run metadata, including workflow name, target, completion state, timestamp, duration and action count. Entries survive a server restart in `.h2a/history.db` (ignored by Git), with 30-day retention and at most 1,000 records. **Workflow input values, AI prompts, results, screenshots and error messages are not written to this journal**. Individual run responses remain in memory during the current server session. The journal is intentionally not encrypted at rest; apply normal device encryption and filesystem permissions for privacy.
+
+The UI also has a **Public index** tab backed by the pinned HTTPS catalog (retrieval only; installing requires CLI opt-in). This is not a publisher-signed marketplace.

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -18,7 +19,8 @@ from urllib.parse import unquote, urlsplit
 from . import __version__
 from .models import NAME_RE, WorkflowError, input_json_schema, list_workflows, load_workflow, save_workflow, workflow_file
 from .runner import run_workflow
-from .marketplace import local_catalog
+from .marketplace import local_catalog, remote_catalog
+from .history import RunJournal
 
 MAX_POST_SIZE = 256 * 1024
 
@@ -51,6 +53,7 @@ class Human2APIServer(ThreadingHTTPServer):
         self.workflows = workflows.resolve()
         self.token = secrets.token_urlsafe(32)
         self.runs: dict[str, dict[str, Any]] = {}
+        self.journal = RunJournal(self.workflows.parent / ".h2a" / "history.db")
         self.recorder: subprocess.Popen[str] | None = None
         self.recorder_error: str | None = None
         self.lock = threading.Lock()
@@ -134,6 +137,10 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return self._json(200, {"browser": {"available": True}, "desktop": {"dependencyAvailable": importlib.util.find_spec("pyautogui") is not None}, "android": {"adbInstalled": shutil.which("adb") is not None}, "aiHealing": {"optInOnly": True}})
             if path == "/api/catalog":
                 return self._json(200, {"packages": local_catalog(self.server.workflows.parent / "catalog")})
+            if path == "/api/catalog/remote":
+                return self._json(200, {"packages": remote_catalog()})
+            if path == "/api/history":
+                return self._json(200, {"history": self.server.journal.list()})
             if path == "/api/workflows":
                 return self._json(200, {"workflows": list_workflows(self.server.workflows)})
             if path == "/api/openapi.json":
@@ -146,7 +153,11 @@ class RequestHandler(BaseHTTPRequestHandler):
                 with self.server.lock:
                     status = self.server.runs.get(run_id)
                 if status is None:
-                    return self._json(404, {"error": "unknown run"})
+                    # After a server restart, only non-sensitive run metadata remains.
+                    record = self.server.journal.get(run_id)
+                    if record is None:
+                        return self._json(404, {"error": "unknown run"})
+                    return self._json(200, {**record, "summaryOnly": True})
                 return self._json(200, status)
             if path == "/api/recorder":
                 proc = self.server.recorder
@@ -170,14 +181,25 @@ class RequestHandler(BaseHTTPRequestHandler):
                 if workflow.get("permissions", "write") == "write" and not approve:
                     raise WorkflowError("write workflow requires approve:true")
                 run_id = secrets.token_hex(6)
+                self.server.journal.start(run_id, name, workflow.get("target", "browser"), len(workflow["steps"]))
                 with self.server.lock:
                     self.server.runs[run_id] = {"state": "running", "workflow": name, "createdAt": int(time.time())}
                 def task() -> None:
+                    started_ns = time.monotonic_ns()
                     try:
                         result = run_workflow(workflow, body.get("inputs") or {}, approve_writes=approve, artifacts_dir=self.server.workflows.parent / "runs", heal_selectors=body.get("healSelectors") is True or body.get("aiHeal") is True, ai_heal=body.get("aiHeal") is True)
                         status = {"state": "completed", "result": result}
                     except (WorkflowError, ValueError, OSError) as exc:
                         status = {"state": "failed", "error": str(exc)[:600]}
+                    except Exception as exc:
+                        # Hide unknown exception details; they may include credentials.
+                        status = {"state": "failed", "error": f"Unexpected engine error ({type(exc).__name__})"}
+                    try:
+                        self.server.journal.finish(run_id, status["state"], (time.monotonic_ns() - started_ns) // 1_000_000)
+                    except sqlite3.Error:
+                        # Durable metadata is best effort; never convert a successful
+                        # automation to failure because the journal is inaccessible.
+                        pass
                     with self.server.lock:
                         self.server.runs[run_id] = status
                 threading.Thread(target=task, daemon=True).start()

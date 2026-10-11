@@ -40,3 +40,20 @@ def test_multi_target_schema_in_openapi(local_server):
     info = schema['paths']['/api/run/phone']['post']['requestBody']['content']['application/json']['schema']
     assert 'aiHeal' in info['properties']
     assert 'approve' in info['properties']
+
+
+def test_public_catalog_view_is_token_protected_and_read_only(local_server, monkeypatch):
+    server, folder, url = local_server
+    from human2api import http_server
+    from unittest.mock import Mock
+    fake = Mock(return_value=[{"name": "create_invoice", "target": "browser", "description": "Sample"}])
+    monkeypatch.setattr(http_server, "remote_catalog", fake)
+    data = json_call(url, server.token, "/api/catalog/remote")
+    assert data["packages"][0]["name"] == "create_invoice"
+    fake.assert_called_once()
+    try:
+        json_call(url, "", "/api/catalog/remote")
+    except HTTPError as exc:
+        assert exc.code == 401
+    else:
+        raise AssertionError("unauthenticated remote catalog request was accepted")
