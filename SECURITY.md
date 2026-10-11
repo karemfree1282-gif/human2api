@@ -36,6 +36,10 @@ A malicious page could change the selector target, trick a workflow into clickin
 - **Community packages:** A `.h2a.zip` has exactly two JSON files. Sha256 guarantees only integrity, **not** author identity or safety. Explicitly review permissions, hosts, and steps prior to installing and running. No executable bundle payloads are allowed.
 - **General:** UI navigation allowlists are not a sandbox for page subresources. Do not expose the loopback REST server via tunneling or reverse proxies. There is no cloud authentication, secret vault, native mobile accessibility service, or signed marketplace in this release.
 
-## Local execution history
+## v0.3 signing, accessibility, cancellation and schedules
 
-The dashboard saves metadata-only SQLite records in `.h2a/history.db` (Git ignored). No run input values, authentication tokens, workflow outputs, screenshots, model prompts or exception texts are written to this journal. It is **not encrypted by the application**; protect the containing device and user account. Recent entries are pruned to 30 days and 1,000 records.
+- Signed `.h2a.zip` v2 uses Ed25519. Signature validity is not equivalent to trust: pin a publisher public key with `--trust-key`. Never upload a private signing key to GitHub or a workflow package. Key generation creates an owner-only private key on POSIX.
+- Windows UIA actions must select one visible, non-password element in one exactly named window. They can operate real desktop applications, so review all actions before granting `--approve`.
+- Cancellation is cooperative at step boundaries, interruptible waits and retries; Playwright/ADB or native operating-system calls cannot always be safely interrupted mid-operation. It is **not** a transactional rollback.
+- Recurring schedules are disabled until the local foreground worker is started. Schedules save only paths to private input files, not the values. Protect the input JSON with OS file permissions (0600 on POSIX), secure the local machine, and revoke schedules you no longer need.
+- The local REST API is for one trusted user on loopback, not for untrusted multi-tenant deployment. No cloud RBAC or network isolation is provided.

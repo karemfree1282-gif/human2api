@@ -14,6 +14,7 @@ from typing import Any, Callable
 from xml.etree import ElementTree as ET
 
 from .models import WorkflowError, PACKAGE_RE, SERIAL_RE, template
+from .execution import RunCancelled, check_cancelled, interruptible_wait, run_step_with_retry
 
 BBOX_RE = re.compile(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]")
 KEYCODES = {"KEYCODE_BACK", "KEYCODE_HOME", "KEYCODE_ENTER", "KEYCODE_TAB", "KEYCODE_DPAD_UP", "KEYCODE_DPAD_DOWN", "KEYCODE_DPAD_LEFT", "KEYCODE_DPAD_RIGHT"}
@@ -93,10 +94,11 @@ def encode_adb_text(value: str) -> str:
     return value.replace(" ", "%s")
 
 
-def execute_android(workflow: dict[str, Any], values: dict[str, Any], artifacts: Path, on_step: Callable | None = None) -> dict[str, Any]:
+def execute_android(workflow: dict[str, Any], values: dict[str, Any], artifacts: Path, on_step: Callable | None = None, *, cancel_event: Any = None) -> dict[str, Any]:
     session = AndroidSession(workflow.get("deviceSerial"))
     outputs: dict[str, Any] = {}
     for i, step in enumerate(workflow["steps"], 1):
+        check_cancelled(cancel_event)
         action = step["action"]
         if on_step:
             on_step(i, action, "running")
@@ -114,13 +116,15 @@ def execute_android(workflow: dict[str, Any], values: dict[str, Any], artifacts:
                     raise WorkflowError("Android keyevent not on the safe allowlist")
                 session.command("shell", "input", "keyevent", step["key"])
             elif action == "wait_ms":
-                time.sleep(step["durationMs"] / 1000)
+                interruptible_wait(step["durationMs"], cancel_event)
             elif action == "assert_text":
                 wanted = template(step["text"], values)
-                if not any(wanted in node.get("text", "") or wanted in node.get("content-desc", "") for node in session.dump_ui().iter("node")):
-                    raise WorkflowError("expected UI text not visible")
+                def assertion() -> None:
+                    if not any(wanted in node.get("text", "") or wanted in node.get("content-desc", "") for node in session.dump_ui().iter("node")):
+                        raise WorkflowError("expected UI text not visible")
+                run_step_with_retry(step, assertion, cancel_event=cancel_event)
             elif action == "extract_text":
-                node = session.find_node(template(step["selector"], values), step.get("by", "text"))
+                node = run_step_with_retry(step, lambda: session.find_node(template(step["selector"], values), step.get("by", "text")), cancel_event=cancel_event)
                 outputs[step["as"]] = (node.get("text", "") or node.get("content-desc", ""))[:10000]
             elif action == "screenshot":
                 file = step.get("filename", f"android-{i}.png")
@@ -134,6 +138,10 @@ def execute_android(workflow: dict[str, Any], values: dict[str, Any], artifacts:
                 outputs.setdefault("artifacts", []).append(str(dest))
             else:
                 raise WorkflowError(f"unsupported Android action: {action}")
+        except RunCancelled:
+            if on_step:
+                on_step(i, action, "cancelled")
+            raise
         except WorkflowError as exc:
             if on_step:
                 on_step(i, action, "failed")

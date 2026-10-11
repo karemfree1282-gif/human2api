@@ -19,6 +19,8 @@ async function refresh() {
   try {
     const data=await api('/api/workflows');
     state.workflows=data.workflows;
+    const picker=$('schedule-name');
+    picker.replaceChildren(...data.workflows.map(w=>node('option',{value:w.name,text:w.name+' ('+w.permissions+')'})));
     $('metric-workflows').textContent=data.workflows.length;
     $('metric-actions').textContent=data.workflows.reduce((sum,x)=>sum+x.steps,0);
     $('nav-count').textContent=data.workflows.length;
@@ -87,14 +89,33 @@ function drawDetails() {
   if((wf.target||'browser') !== 'browser'){healWrap.style.display='none';aiWrap.style.display='none';}
   ai.addEventListener('change',()=>{if(ai.checked)heal.checked=true;});
   const runButton=node('button',{className:'button button-primary',type:'submit',text:'▶  Run now'});
-  form.append(healWrap,aiWrap,node('div',{className:'workflow-run-footer'},[approvalWrap,runButton]));
+  const cancelButton=node('button',{className:'button button-soft',type:'button',text:'■  Cancel run'});
+  cancelButton.disabled=true;
+  let activeRunId=null;
+  cancelButton.addEventListener('click',async()=>{
+    if(!activeRunId)return;
+    try { const result=await api('/api/runs/'+activeRunId+'/cancel',{method:'POST',body:'{}'});
+      output.textContent='Cancellation requested. Waiting for the current action to finish safely…';
+      cancelButton.disabled=true;
+    } catch(err){toast('Could not cancel: '+err.message);}
+  });
+  form.append(healWrap,aiWrap,node('div',{className:'workflow-run-footer'},[approvalWrap,cancelButton,runButton]));
   const output=node('pre',{className:'run-output',text:'Ready. Runs locally on your '+(wf.target||'browser')+' engine. Check permissions before executing.'});
   form.addEventListener('submit',async event=>{
     event.preventDefault();if(wf.permissions==='write'&&!approval.checked){toast('Approve write actions before running.');return;}
     const args={}; for(const [key,{input,spec}] of Object.entries(inputRefs)){ if(spec.type==='boolean')args[key]=input.checked; else if(spec.type==='number')args[key]=Number(input.value); else if(input.value!=='')args[key]=input.value; }
     try {runButton.disabled=true;output.textContent='Executing '+(wf.target||'browser')+' workflow...';const r=await api('/api/run/'+encodeURIComponent(wf.name),{method:'POST',body:JSON.stringify({inputs:args,approve:approval.checked,healSelectors:heal.checked,aiHeal:ai.checked})});
-      let polls=0;const poll=async()=>{const status=await api('/api/runs/'+r.runId);if(status.state==='running' && polls++<240){setTimeout(poll,500);return;} output.textContent=JSON.stringify(status,null,2);runButton.disabled=false;showHistory();};await poll();
-    }catch(err){output.textContent='Error: '+err.message;runButton.disabled=false;}
+      activeRunId=r.runId;cancelButton.disabled=false;
+      let polls=0;const poll=async()=>{const status=await api('/api/runs/'+r.runId);
+        if(['running','cancelling'].includes(status.state) && polls++<240){
+          const current=status.lastStep;
+          if(current)output.textContent=`${status.state} · step ${current.index}: ${current.action} (${current.state})`;
+          setTimeout(poll,500);return;
+        }
+        activeRunId=null;cancelButton.disabled=true;
+        output.textContent=JSON.stringify(status,null,2);runButton.disabled=false;showHistory();
+      };await poll();
+    }catch(err){output.textContent='Error: '+err.message;runButton.disabled=false;cancelButton.disabled=true;activeRunId=null;}
   });
   body.append(form,output);
 }
@@ -164,3 +185,30 @@ $('history-link')?.addEventListener('click',showHistory);
 updateEngineStatus();
 showCatalog(false);
 showHistory();
+
+async function showSchedules(){
+  const host=$('scheduled-list');
+  try{
+    const data=await api('/api/schedules');host.replaceChildren();
+    if(!data.schedules.length){host.append(node('p',{text:'No recurring tasks configured.'}));return;}
+    for(const job of data.schedules){
+      const row=node('div',{className:'schedule-row'});
+      row.append(node('span',{text:`${job.name} · every ${job.everyMinutes} min · last: ${job.lastState||'never'} · next: ${new Date(job.nextRunAt*1000).toLocaleString()}`}));
+      row.append(node('button',{className:'button button-soft',text:'Remove',onclick:async()=>{
+        try{await api('/api/schedules/remove',{method:'POST',body:JSON.stringify({name:job.name})});
+          toast('Schedule removed');showSchedules();}catch(err){toast(err.message);}
+      }}));host.append(row);
+    }
+  }catch(err){host.replaceChildren(node('p',{text:'Schedules unavailable: '+err.message}));}
+}
+$('schedule-form').addEventListener('submit',async event=>{
+  event.preventDefault();
+  const name=$('schedule-name').value;
+  const interval=Number($('schedule-interval').value);
+  const path=$('schedule-data').value.trim();
+  try{await api('/api/schedules/add',{method:'POST',body:JSON.stringify({name,everyMinutes:interval,
+      dataFile:path||null,approve:$('schedule-approval').checked})});
+    toast('Schedule saved. Run h2a scheduler separately to start the worker.');showSchedules();
+  }catch(err){toast('Schedule not saved: '+err.message);}
+});
+showSchedules();

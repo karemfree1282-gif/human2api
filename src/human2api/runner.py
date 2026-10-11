@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 import secrets
+import threading
+import re
 import shutil
 import time
 from pathlib import Path
@@ -14,6 +16,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page, Route, expect, sync_playwright
 
 from .models import WorkflowError, secret_redact, template, validate_inputs, validate_workflow
+from .execution import RunCancelled, check_cancelled, interruptible_wait, run_step_with_retry
 
 StepHook = Callable[[int, str, str], None]
 
@@ -139,6 +142,8 @@ def run_workflow(
     on_step: StepHook | None = None,
     heal_selectors: bool = False,
     ai_heal: bool = False,
+    run_id: str | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> dict[str, Any]:
     """Run an automation. Write-enabled workflows require an explicit grant.
 
@@ -157,7 +162,11 @@ def run_workflow(
     hosts = set(workflow.get("allowedHosts") or ([urlparse(workflow["startUrl"]).hostname] if target == "browser" else []))
     if target == "browser":
         _safe_navigation(workflow["startUrl"], hosts)
-    run_id = secrets.token_hex(6)
+    if run_id is None:
+        run_id = secrets.token_hex(8)
+    if not isinstance(run_id, str) or not re.fullmatch(r"[0-9a-f]{12,64}", run_id):
+        raise WorkflowError("invalid run identifier")
+    check_cancelled(cancel_event)
     artifacts = Path(artifacts_dir).resolve() / f"{workflow['name']}-{run_id}"
     artifacts.mkdir(parents=True, exist_ok=False)
     started = time.monotonic()
@@ -167,10 +176,10 @@ def run_workflow(
         if target in {"desktop", "android"}:
             if target == "desktop":
                 from .desktop import execute_desktop
-                outputs = execute_desktop(workflow, values, artifacts, on_step=on_step)
+                outputs = execute_desktop(workflow, values, artifacts, on_step=on_step, cancel_event=cancel_event)
             else:
                 from .android import execute_android
-                outputs = execute_android(workflow, values, artifacts, on_step=on_step)
+                outputs = execute_android(workflow, values, artifacts, on_step=on_step, cancel_event=cancel_event)
             return {"ok": True, "workflow": workflow["name"], "target": target, "runId": run_id,
                     "steps": len(workflow["steps"]), "durationMs": round((time.monotonic() - started) * 1000), "outputs": outputs}
         with sync_playwright() as playwright:
@@ -192,6 +201,7 @@ def run_workflow(
                 page.set_default_timeout(7000)
                 page.goto(workflow["startUrl"], wait_until="domcontentloaded", timeout=20000)
                 for current_index, step in enumerate(workflow["steps"], start=1):
+                    check_cancelled(cancel_event)
                     if on_step:
                         on_step(current_index, step["action"], "running")
                     if step["action"] == "switch_tab":
@@ -201,14 +211,22 @@ def run_workflow(
                             raise WorkflowError(f"browser tab {index} does not exist")
                         page = pages[index]
                     else:
-                        _run_step(page, step, values, artifacts, hosts, outputs, heal=heal_selectors, ai_heal=ai_heal)
+                        if step["action"] == "wait_ms":
+                            interruptible_wait(step["durationMs"], cancel_event)
+                        else:
+                            run_step_with_retry(step, lambda: _run_step(page, step, values, artifacts, hosts, outputs, heal=heal_selectors, ai_heal=ai_heal), cancel_event=cancel_event)
                     if blocked_navigations:
                         raise WorkflowError("browser attempted unauthorized navigation to " + blocked_navigations[0])
+                    check_cancelled(cancel_event)
                     if on_step:
                         on_step(current_index, step["action"], "passed")
             finally:
                 browser.close()
-    except (PlaywrightError, WorkflowError, OSError, ValueError) as exc:
+    except RunCancelled:
+        if on_step and current_index:
+            on_step(current_index, workflow["steps"][current_index - 1]["action"], "cancelled")
+        raise
+    except (PlaywrightError, WorkflowError, AssertionError, OSError, ValueError) as exc:
         detail = secret_redact(str(exc), workflow, values)
         if on_step:
             on_step(current_index, workflow["steps"][max(0, current_index - 1)]["action"], "failed")

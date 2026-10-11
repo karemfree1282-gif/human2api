@@ -26,7 +26,7 @@
     <main class="main" id="workflows">
       <header class="topbar"><div class="crumb">Workspace <span>/</span> Overview</div><div class="top-right"><span class="pill"><i></i> ENGINE READY</span><span class="avatar">H2</span></div></header>
       <section class="hero">
-        <div class="eyebrow"><span class="eyebrow-dot">✳</span> OPEN SOURCE AUTOMATION STUDIO <span class="eyebrow-line"></span> v0.2.2</div>
+        <div class="eyebrow"><span class="eyebrow-dot">✳</span> OPEN SOURCE AUTOMATION STUDIO <span class="eyebrow-line"></span> v0.3.0</div>
         <h1>Teach it once.<br><span>Automate forever.</span></h1>
         <p>Teach browser, desktop, and Android tasks. Inspect the workflow, verify results, and run it through CLI, REST, or your favorite MCP-enabled AI agent.</p>
         <div class="hero-actions"><button class="button button-primary" id="new-record">◉ &nbsp; New recording <span>↗</span></button><a class="button button-soft" href="/demo" target="_blank" rel="noreferrer">Try demo sandbox <span>↗</span></a></div>
@@ -49,6 +49,18 @@
       </div>
       <section class="catalog-panel" id="marketplace" aria-label="Inspect local and public workflow packages"><div class="catalog-header"><div><span class="eyebrow eyebrow-small">WORKFLOW MARKETPLACE</span><h2>Share inspectable skills.</h2><p>Only checksummed JSON workflows. No executable packages. Every installation needs explicit approval.</p></div><div class="action-pair"><button class="button button-soft" id="catalog-refresh" type="button">Local catalog ↗</button><button class="button button-soft" id="catalog-public" type="button">Public index ↗</button></div></div><div id="catalog-packages" class="catalog-items" aria-live="polite">Use <code>h2a pack</code> to create a shareable workflow package.</div><p class="catalog-note">Public entries include integrity hashes, not authenticated publisher identities. Review the actions and permissions before installing.</p></section>
       <section class="catalog-panel" id="activity" aria-label="Recent local workflow executions"><div class="catalog-header"><div><span class="eyebrow eyebrow-small">PRIVATE RUN JOURNAL</span><h2>Recent activity.</h2><p>Locally stored execution state and timestamps. No input values, passwords, screenshots or output data are saved to history.</p></div><button class="button button-soft" id="history-refresh" type="button">Refresh activity ↻</button></div><div id="history-entries" class="catalog-items" aria-live="polite"><p>Loading recent execution metadata…</p></div><p class="catalog-note">Saved in .h2a/history.db · up to 1,000 entries · 30-day retention · stays on this machine.</p></section>
+      <section class="catalog-panel" id="schedules" aria-label="Opt-in local recurring workflows">
+        <div class="catalog-header"><div><span class="eyebrow eyebrow-small">RECURRING TASKS</span><h2>Scheduled automation.</h2>
+        <p>Schedules are local and contain no input values. Start <code>h2a scheduler</code> separately to execute due jobs.</p></div></div>
+        <div id="scheduled-list" class="catalog-items" aria-live="polite"></div>
+        <form id="schedule-form" class="schedule-form">
+          <label>Workflow<select id="schedule-name" aria-label="Workflow to schedule" required></select></label>
+          <label>Every (minutes)<input id="schedule-interval" type="number" min="1" max="10080" value="60" required></label>
+          <label>Private inputs file (optional)<input id="schedule-data" type="text" placeholder="/absolute/path/to/inputs.json"></label>
+          <label><input id="schedule-approval" type="checkbox"> I authorize recurring write actions for this workflow</label>
+          <button class="button button-primary" type="submit">Add schedule</button>
+        </form>
+      </section>
       <section class="terminal" aria-label="Command line quickstart"><div class="terminal-header"><span class="terminal-dots"><i></i><i></i><i></i></span> QUICKSTART <button id="copy-cli" class="terminal-copy">Copy</button></div><pre id="cli-code">pip install -e .
 python -m playwright install chromium
 h2a serve</pre></section>

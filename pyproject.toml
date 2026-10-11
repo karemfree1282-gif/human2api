@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "human2api"
-version = "0.2.2"
+version = "0.3.0"
 description = "Record browser, desktop, and Android tasks. Reuse workflows through CLI, REST and MCP."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -30,6 +30,8 @@ dependencies = ["playwright>=1.55,<2"]
 [project.optional-dependencies]
 dev = ["pytest>=8,<10", "build>=1,<2", "Pillow>=10,<13", "jsonschema>=4,<5"]
 desktop = ["pyautogui>=0.9.54,<1", "pynput>=1.7,<2", "opencv-python>=4.9,<5"]
+accessibility = ["pywinauto>=0.6.8,<1; sys_platform == 'win32'"]
+signing = ["cryptography>=42,<48"]
 
 [project.scripts]
 h2a = "human2api.cli:main"

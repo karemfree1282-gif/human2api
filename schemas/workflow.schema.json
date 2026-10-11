@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/karemfree1282-gif/human2api/raw/main/schemas/workflow.schema.json",
-  "title": "Human2API Workflow v1 (browser / desktop / Android)",
-  "description": "Portable, non-executable workflow definition compatible with Human2API 0.2",
+  "title": "Human2API Workflow v1 (browser / desktop / Android; engine v0.3)",
+  "description": "Portable constrained actions. Schema v1 remains compatible with all previous releases.",
   "type": "object",
   "required": [
     "schemaVersion",
@@ -176,6 +176,10 @@
               "tap",
               "tap_text",
               "type_text",
+              "ui_assert_text",
+              "ui_click",
+              "ui_extract_text",
+              "ui_fill",
               "wait",
               "wait_ms"
             ]
@@ -310,6 +314,36 @@
             "type": "string",
             "pattern": "^[^./\\\\][^/\\\\]*$",
             "maxLength": 128
+          },
+          "windowTitle": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "automationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "controlType": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "retries": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 3
+          },
+          "retryDelayMs": {
+            "type": "integer",
+            "minimum": 100,
+            "maximum": 10000
           }
         },
         "additionalProperties": false,
@@ -555,6 +589,124 @@
                 "durationMs"
               ]
             }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "enum": [
+                    "ui_click",
+                    "ui_fill",
+                    "ui_assert_text",
+                    "ui_extract_text"
+                  ]
+                }
+              },
+              "required": [
+                "action"
+              ]
+            },
+            "then": {
+              "required": [
+                "windowTitle"
+              ],
+              "anyOf": [
+                {
+                  "required": [
+                    "automationId"
+                  ]
+                },
+                {
+                  "required": [
+                    "name"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "ui_fill"
+                }
+              },
+              "required": [
+                "action"
+              ]
+            },
+            "then": {
+              "required": [
+                "value"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "ui_assert_text"
+                }
+              },
+              "required": [
+                "action"
+              ]
+            },
+            "then": {
+              "required": [
+                "text"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "ui_extract_text"
+                }
+              },
+              "required": [
+                "action"
+              ]
+            },
+            "then": {
+              "required": [
+                "as"
+              ]
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "retries"
+              ]
+            },
+            "then": {
+              "properties": {
+                "action": {
+                  "enum": [
+                    "wait",
+                    "assert_text",
+                    "extract_text",
+                    "assert_image",
+                    "ui_assert_text",
+                    "ui_extract_text"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "retryDelayMs"
+              ]
+            },
+            "then": {
+              "required": [
+                "retries"
+              ]
+            }
           }
         ]
       }
@@ -661,6 +813,10 @@
                     "screenshot",
                     "scroll",
                     "type_text",
+                    "ui_assert_text",
+                    "ui_click",
+                    "ui_extract_text",
+                    "ui_fill",
                     "wait_ms"
                   ]
                 }

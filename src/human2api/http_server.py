@@ -17,10 +17,12 @@ from typing import Any
 from urllib.parse import unquote, urlsplit
 
 from . import __version__
-from .models import NAME_RE, WorkflowError, input_json_schema, list_workflows, load_workflow, save_workflow, workflow_file
+from .models import NAME_RE, WorkflowError, input_json_schema, list_workflows, load_workflow, save_workflow, workflow_file, validate_inputs
 from .runner import run_workflow
+from .execution import RunCancelled
 from .marketplace import local_catalog, remote_catalog
 from .history import RunJournal
+from .scheduler import LocalScheduler
 
 MAX_POST_SIZE = 256 * 1024
 
@@ -35,9 +37,13 @@ def openapi_schema(directory: Path, port: int = 8765) -> dict[str, Any]:
                 "summary": wf["description"],
                 "security": [{"LocalToken": []}],
                 "requestBody": {"required": True, "content": {"application/json": {"schema": {"type": "object", "properties": {"inputs": input_json_schema(wf), "approve": {"type": "boolean", "description": "Explicit permission to run write workflows"}, "healSelectors": {"type": "boolean", "description": "Enable local semantic recovery"}, "aiHeal": {"type": "boolean", "description": "Explicitly consent to sending sanitized UI metadata to your configured provider"}}, "required": ["inputs"], "additionalProperties": False}}}},
-                "responses": {"202": {"description": "Execution accepted; poll GET /api/runs/{runId}"}, "400": {"description": "Validation error"}},
+                "responses": {"202": {"description": "Execution accepted; poll GET /api/runs/{runId}"}, "400": {"description": "Validation error"}, "429": {"description": "All local execution slots are busy"}},
             }
         }
+    paths["/api/runs/{runId}/cancel"] = {
+        "post": {"operationId": "cancel_run", "summary": "Request cooperative cancellation of an active run",
+                 "security": [{"LocalToken": []}], "parameters": [{"name": "runId", "in": "path", "required": True, "schema": {"type": "string"}}],
+                 "responses": {"202": {"description": "Cancellation requested"}, "409": {"description": "Run already finished"}}}}
     return {
         "openapi": "3.1.0",
         "info": {"title": "Human2API local REST API", "version": __version__, "description": "Only listen on loopback. Send X-H2A-Token for all API operations. Write workflows require approve:true."},
@@ -53,6 +59,8 @@ class Human2APIServer(ThreadingHTTPServer):
         self.workflows = workflows.resolve()
         self.token = secrets.token_urlsafe(32)
         self.runs: dict[str, dict[str, Any]] = {}
+        self.cancellations: dict[str, threading.Event] = {}
+        self.execution_slots = threading.BoundedSemaphore(2)
         self.journal = RunJournal(self.workflows.parent / ".h2a" / "history.db")
         self.recorder: subprocess.Popen[str] | None = None
         self.recorder_error: str | None = None
@@ -134,13 +142,15 @@ class RequestHandler(BaseHTTPRequestHandler):
             if path == "/api/platforms":
                 import importlib.util
                 import shutil
-                return self._json(200, {"browser": {"available": True}, "desktop": {"dependencyAvailable": importlib.util.find_spec("pyautogui") is not None}, "android": {"adbInstalled": shutil.which("adb") is not None}, "aiHealing": {"optInOnly": True}})
+                return self._json(200, {"browser": {"available": True}, "desktop": {"dependencyAvailable": importlib.util.find_spec("pyautogui") is not None}, "android": {"adbInstalled": shutil.which("adb") is not None}, "windowsUIA": {"supportedOnWindows": True, "requiresExtra": "accessibility"}, "aiHealing": {"optInOnly": True}})
             if path == "/api/catalog":
                 return self._json(200, {"packages": local_catalog(self.server.workflows.parent / "catalog")})
             if path == "/api/catalog/remote":
                 return self._json(200, {"packages": remote_catalog()})
             if path == "/api/history":
                 return self._json(200, {"history": self.server.journal.list()})
+            if path == "/api/schedules":
+                return self._json(200, {"schedules": LocalScheduler(self.server.workflows).list(), "workerRequired": True})
             if path == "/api/workflows":
                 return self._json(200, {"workflows": list_workflows(self.server.workflows)})
             if path == "/api/openapi.json":
@@ -174,34 +184,85 @@ class RequestHandler(BaseHTTPRequestHandler):
         try:
             body = self._read_body()
             path = urlsplit(self.path).path
+            if path == "/api/schedules/add":
+                name = body.get("name")
+                minutes = body.get("everyMinutes")
+                data_path = body.get("dataFile")
+                if data_path is not None and (not isinstance(data_path, str) or not 0 < len(data_path) <= 4096):
+                    raise WorkflowError("dataFile must be a local file path")
+                added = LocalScheduler(self.server.workflows).add(name, every_minutes=minutes,
+                    approve_writes=body.get("approve") is True,
+                    data_file=Path(data_path) if data_path is not None else None)
+                return self._json(201, {"schedule": added})
+            if path == "/api/schedules/remove":
+                name = body.get("name")
+                if not isinstance(name, str) or not NAME_RE.fullmatch(name):
+                    raise WorkflowError("invalid schedule name")
+                LocalScheduler(self.server.workflows).remove(name)
+                return self._json(200, {"removed": name})
+            if path.startswith("/api/runs/") and path.endswith("/cancel"):
+                run_id = path[len("/api/runs/"):-len("/cancel")]
+                with self.server.lock:
+                    current = self.server.runs.get(run_id)
+                    event = self.server.cancellations.get(run_id)
+                    if current is None:
+                        return self._json(404, {"error": "unknown run"})
+                    if current["state"] not in {"running", "cancelling"} or event is None:
+                        return self._json(409, {"error": "run has already finished", "state": current["state"]})
+                    event.set()
+                    current["state"] = "cancelling"
+                return self._json(202, {"runId": run_id, "state": "cancelling"})
             if path.startswith("/api/run/"):
                 name = unquote(path.removeprefix("/api/run/"))
                 workflow = load_workflow(workflow_file(self.server.workflows, name))
                 approve = body.get("approve") is True
                 if workflow.get("permissions", "write") == "write" and not approve:
                     raise WorkflowError("write workflow requires approve:true")
-                run_id = secrets.token_hex(6)
-                self.server.journal.start(run_id, name, workflow.get("target", "browser"), len(workflow["steps"]))
-                with self.server.lock:
-                    self.server.runs[run_id] = {"state": "running", "workflow": name, "createdAt": int(time.time())}
+                inputs = body.get("inputs", {})
+                validate_inputs(workflow, inputs)
+                if not self.server.execution_slots.acquire(blocking=False):
+                    return self._json(429, {"error": "two workflows are already running; try after one finishes"})
+                run_id = secrets.token_hex(12)
+                stop_event = threading.Event()
+                started_at = int(time.time())
+                try:
+                    self.server.journal.start(run_id, name, workflow.get("target", "browser"), len(workflow["steps"]))
+                    with self.server.lock:
+                        self.server.cancellations[run_id] = stop_event
+                        self.server.runs[run_id] = {"state": "running", "workflow": name, "createdAt": started_at, "lastStep": None}
+                except Exception:
+                    self.server.execution_slots.release()
+                    raise
+                def track_step(index: int, action: str, state: str) -> None:
+                    # Persist only action name, ordinal and status in memory. Never input values.
+                    with self.server.lock:
+                        if run_id in self.server.runs:
+                            self.server.runs[run_id]["lastStep"] = {"index": index, "action": action, "state": state}
                 def task() -> None:
                     started_ns = time.monotonic_ns()
                     try:
-                        result = run_workflow(workflow, body.get("inputs") or {}, approve_writes=approve, artifacts_dir=self.server.workflows.parent / "runs", heal_selectors=body.get("healSelectors") is True or body.get("aiHeal") is True, ai_heal=body.get("aiHeal") is True)
+                        result = run_workflow(workflow, inputs, approve_writes=approve,
+                            artifacts_dir=self.server.workflows.parent / "runs",
+                            heal_selectors=body.get("healSelectors") is True or body.get("aiHeal") is True,
+                            ai_heal=body.get("aiHeal") is True, run_id=run_id,
+                            cancel_event=stop_event, on_step=track_step)
                         status = {"state": "completed", "result": result}
+                    except RunCancelled:
+                        status = {"state": "cancelled", "error": "execution cancelled by user"}
                     except (WorkflowError, ValueError, OSError) as exc:
-                        status = {"state": "failed", "error": str(exc)[:600]}
+                        status = {"state": "cancelled" if stop_event.is_set() else "failed", "error": str(exc)[:600]}
                     except Exception as exc:
-                        # Hide unknown exception details; they may include credentials.
                         status = {"state": "failed", "error": f"Unexpected engine error ({type(exc).__name__})"}
+                    finally:
+                        self.server.execution_slots.release()
                     try:
                         self.server.journal.finish(run_id, status["state"], (time.monotonic_ns() - started_ns) // 1_000_000)
                     except sqlite3.Error:
-                        # Durable metadata is best effort; never convert a successful
-                        # automation to failure because the journal is inaccessible.
                         pass
                     with self.server.lock:
-                        self.server.runs[run_id] = status
+                        previous = self.server.runs.get(run_id, {})
+                        self.server.runs[run_id] = {**status, "lastStep": previous.get("lastStep"), "workflow": name}
+                        self.server.cancellations.pop(run_id, None)
                 threading.Thread(target=task, daemon=True).start()
                 return self._json(202, {"runId": run_id, "state": "running"})
             if path.startswith("/api/save/"):

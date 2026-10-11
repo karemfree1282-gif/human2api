@@ -25,3 +25,13 @@
 
 .action-pair{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .catalog-entry code{font:10px/1.5 ui-monospace,Consolas,monospace;color:#d5ffe9;overflow-wrap:anywhere}
+
+/* Opt-in schedule editor: clear fields and state; no input values are persisted. */
+.schedule-form { display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px;margin-top:18px; }
+.schedule-form label { display:flex; flex-direction:column;gap:7px;font-size:12px;flex:1 1 150px; }
+.schedule-form input,.schedule-form select { background:#101826;color:#ecf3fa;border:1px solid #304252;border-radius:8px;padding:10px;min-height:38px;max-width:100%; }
+.schedule-form input[type="checkbox"] { min-height:initial; }
+.schedule-form label:has(input[type="checkbox"]) { display:flex;align-items:center;flex-direction:row;flex-basis:250px; }
+.schedule-row { display:flex;justify-content:space-between;gap:16px;align-items:center;padding:9px 0; }
+.schedule-row+ .schedule-row { border-top:1px solid #304252; }
+@media(max-width:650px){.schedule-row{align-items:flex-start;flex-direction:column}}

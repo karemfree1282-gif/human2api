@@ -1,3 +1,13 @@
+## v0.3.0 — Safer execution and publisher trust
+
+- Cooperative cancellation and step progress for localhost REST/dashboard; bounded parallel executions.
+- Windows UIA selectors, text extraction/assertions and Unicode ValuePattern entry, with optional dependencies.
+- Opt-in local interval scheduler with locked-down input JSON files and explicit write authorization.
+- Signed Ed25519 workflow packages (manifest v2), key generation and pinned publisher verification.
+- Read-only retries only; mutating actions cannot be automatically repeated.
+- Plan/history/keygen/inspect-desktop/scheduler CLI commands; JSON Schema and documentation updates.
+- Hardware acceptance across Windows/macOS/Linux/Android and complete GitHub Actions runner validation still outstanding.
+
 # Changelog
 
 ## [0.1.0] - 2026-10-11
@@ -23,18 +33,3 @@ Initial alpha release candidate:
 - Upgraded local dashboard with engine support/skill catalog panels and per-run healing permissions.
 - Kept existing workflow schemaVersion 1 browser files compatible; extended target-specific schema.
 - Added mocked cross-target security tests and documentation explaining hardware-validation gaps.
-
-## 0.2.1 — public read-only community index
-
-- Added HTTPS registry with package-index schema checks, download size bounds and disabled redirects.
-- Added checksum-pinned opt-in installation (`h2a catalog --remote`, `h2a install-remote --approve`).
-- Added public JSON index and an extensive mocked negative-case/integrity test suite.
-- This does not supply signed publisher identity, vetted reviews, or a hosted execution service.
-
-## 0.2.2 — persistent private history and public index UI
-
-- Added local SQLite run journal with bounded retention and restart interruption recovery.
-- Added token-authenticated metadata-only REST API for recent history.
-- Added public read-only community index browser to the dashboard with no auto-installation.
-- Improved unexpected runner-error sanitization, documentation and tests.
-- No physical Android or native-desktop acceptance claims.

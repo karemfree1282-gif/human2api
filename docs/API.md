@@ -35,14 +35,11 @@ Available routes:
 | GET | `/api/workflows/{name}` | Fetch one workflow JSON |
 | POST | `/api/save/{name}` | Save validated JSON (`name` must match) |
 | POST | `/api/run/{name}` | Launch run, returns `runId` |
-| GET | `/api/runs/{runId}` | Poll until completed/failed |
+| GET | `/api/runs/{runId}` | Poll progress until completed/failed/cancelled |
+| POST | `/api/runs/{runId}/cancel` | Request cooperative cancellation (body `{}`) |
 | POST | `/api/record` | Start local visible Chromium recording |
 | GET | `/api/recorder` | Query recording process status |
 | GET | `/api/openapi.json` | Generated OpenAPI 3.1 contract |
-| GET | `/api/platforms` | Browser/desktop/ADB availability |
-| GET | `/api/catalog` | Local checksummed packages |
-| GET | `/api/catalog/remote` | Public HTTPS read-only index (never auto-installs) |
-| GET | `/api/history` | Recent metadata-only run history (up to 50 entries) |
 
 POST example, substituting your dashboard's ephemeral token:
 
@@ -75,7 +72,7 @@ This generates a separate typed `POST /api/run/<name>` path for each valid workf
 
 Every workflow may set `"target": "browser"` (default for legacy v0.1 JSON), `"desktop"`, or `"android"`. For desktop/Android, omit `startUrl` and `allowedHosts`. Android may specify `deviceSerial` to enforce connection to a specific authorized device.
 
-Run requests accept optional booleans `healSelectors` (local semantic fallback) and `aiHeal` (explicit permission to send sanitized browser element metadata to the configured model provider). `aiHeal` implies `healSelectors`. These options are browser-only. The server also exposes `GET /api/platforms`, `GET /api/catalog`, `GET /api/catalog/remote`, and `GET /api/history` (all require the local token).
+Run requests accept optional booleans `healSelectors` (local semantic fallback) and `aiHeal` (explicit permission to send sanitized browser element metadata to the configured model provider). `aiHeal` implies `healSelectors`. These options are browser-only. The server also exposes `GET /api/platforms` and `GET /api/catalog` (both require the local token).
 
 ### Desktop actions
 
@@ -91,8 +88,15 @@ The image assertion loads reference PNGs from `assets/` adjacent to the workflow
 
 ### Workflow packages
 
-`h2a pack`, `h2a verify`, `h2a catalog` and `h2a install --approve` use a checksummed local JSON-only `.h2a.zip`. Online read-only discovery is available with `h2a catalog --remote` and `h2a install-remote NAME --approve`. Trusted publisher signatures and account-based ratings are not implemented.
+`h2a pack`, `h2a verify`, `h2a catalog` and `h2a install --approve` use a checksummed local JSON-only `.h2a.zip`. Online discovery, third-party signed publishers, or account-based ratings are not implemented.
 
-## Privacy-preserving run history
+## v0.3 execution controls
 
-`GET /api/history` returns only workflow name, target, state, timestamps, duration, step count, and opaque run ID; its SQLite DB lives in `.h2a/history.db` next to the workflows directory. It stores **no inputs, credentials, outputs, screenshots, prompts or exception strings**. Entries older than 30 days and records beyond the newest 1,000 are automatically pruned; run status may be `interrupted` following an abrupt server stop.
+- Local API: at most two concurrent executions. Excess requests return HTTP 429.
+- To cancel, send `POST /api/runs/<runId>/cancel` with header `X-H2A-Token` and JSON `{}`. Cancellation is cooperative; current Playwright/ADB calls may need to finish before the run stops.
+- `GET /api/runs/<runId>` returns the current state and `lastStep` metadata without input values.
+- `h2a plan <workflow> --data-file inputs.json` validates inputs and prints **only field names** and action names. Nothing executes.
+- Native Windows desktop steps: `ui_click`, `ui_fill`, `ui_assert_text`, `ui_extract_text`. Require `windowTitle` and exactly-identifying `automationId` or `name`.
+- Read-only `wait`, `assert_text`, `extract_text`, `assert_image`, `ui_assert_text`, `ui_extract_text` can take `retries` (0–3) and `retryDelayMs` (100–10,000). **Mutating actions cannot auto-retry**, to avoid duplicate writes.
+- Local dashboard and REST endpoints `GET /api/schedules`, `POST /api/schedules/add`, and `POST /api/schedules/remove` manage opt-in schedules. Optional foreground `h2a scheduler` runs locally authorized workflows. Values reside in a private JSON input file; only its absolute path is saved in `.h2a/schedules.json`. The scheduler does not start automatically.
+- Package `packageVersion:2` uses Ed25519 signatures. A pinned public key is checked with `--trust-key`; a valid package signature does not imply publisher trust without pinning. Unsigned v1 packages remain installable by explicit approval.

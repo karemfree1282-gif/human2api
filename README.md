@@ -20,11 +20,11 @@
 
 ---
 
-> **v0.2.2 development release.** The browser engine has automated local tests and the other platform engines have mocked unit tests, but physical Windows/macOS/Linux app and Android device acceptance tests are not yet complete. This project is **not** advertised as production-ready, a hosted cloud service, or a universal API for every app.
+> **v0.3 development release.** The browser engine has automated local tests and the other platform engines have mocked unit tests, but physical Windows/macOS/Linux app and Android device acceptance tests are not yet complete. This project is **not** advertised as production-ready, a hosted cloud service, or a universal API for every app.
 
 ## The problem
 
-Plenty of software has no public API. Human2API turns an *explicit, inspected workflow* into a reusable local tool. No generated code executes inside workflow definitions. Workflows are human-readable JSON, and write actions require a grant before each execution path.
+Plenty of software has no public API. Human2API turns an *explicit, inspected workflow* into a reusable local tool. No generated code executes inside workflow definitions. Workflows are human-readable JSON, and write actions require explicit approval (either per-run, or once when the user deliberately creates a recurring local schedule).
 
 ```
 Teach a browser / desktop / Android task
@@ -62,13 +62,15 @@ h2a run create_invoice --data '{"customer_name":"Alex","amount":49.99}' --approv
 ```bash
 python -m pip install -e '.[desktop]'
 h2a record-desktop --name mouse_demo
+# Windows with stable UI Automation selectors (optional):
+# h2a record-desktop --name smart_demo --smart
 # Perform only the mouse clicks / scrolls you want recorded, then press F12.
 # No keyboard content, passwords or clipboard text is captured.
 h2a check mouse_demo
 h2a run mouse_demo --approve
 ```
 
-The desktop recorder captures **pointer actions only**. To enter values, edit the generated JSON and add `type_text` with a `{{variable}}` declaration under `inputs`. The current desktop text backend supports **ASCII**, and visible UI coordinates are resolution-dependent. Set mouse to the upper-left corner to activate PyAutoGUI's failsafe. `--show-browser` only applies to the browser target.
+The desktop recorder captures **pointer actions only**. On Windows, `--smart` attempts to record non-password UIA automation IDs for clicks and falls back to coordinates when IDs are unavailable. It never records typed text. To enter values, edit the generated JSON and add `type_text` with a `{{variable}}` declaration under `inputs`. The current desktop text backend supports **ASCII**, and visible UI coordinates are resolution-dependent. Set mouse to the upper-left corner to activate PyAutoGUI's failsafe. `--show-browser` only applies to the browser target.
 
 **Android (USB or emulator + Android platform-tools)**
 
@@ -90,14 +92,14 @@ The Android recorder uses a **guided CLI** rather than passive touch capture. `i
 
 | Capability | Browser | Desktop | Android |
 | --- | --- | --- | --- |
-| Record actions | DOM events, tabs, named iframes | Pointer clicks & scroll | Guided ADB commands |
+| Record actions | DOM events, tabs, named iframes | Pointer clicks & scroll; Windows UIA inspect | Guided ADB commands |
 | Replay | Playwright | PyAutoGUI (optional) | Android platform-tools |
-| Parameterized text input | Yes | ASCII | Restricted ASCII |
+| Parameterized text input | Yes | ASCII mouse backend; Unicode through Windows UIA | Restricted ASCII |
 | Visual/UI assertions | DOM text | Reference image (optional OpenCV) | UIAutomator text |
 | Screenshots | Yes | Yes | Yes |
 | MCP / REST / CLI | Yes | Yes | Yes |
-| Automatic failure recovery | Optional semantic + optional AI selector suggestions | Not yet | Not yet |
-| Verified on actual target devices | Chromium DOM tests; network E2E deferred in managed environment | Mock-based tests only | Mock-based tests only |
+| Automatic failure recovery | Optional semantic + opt-in AI selector suggestions; read-only retries | Read-only UIA verification retries | Android assertion retries |
+| Verified on actual target devices | Chromium DOM tests; network E2E deferred in managed environment | Simulated UIA and mocked GUI tests only | Mocked ADB tests only |
 
 Browser workflows are self-contained JSON. Captured form **values are discarded immediately** and replaced by input variables; URLs with query parameters are scrubbed at capture time. New-tab switching and named/ID-based first-level iframe selectors are supported. Not all browsers, operating system dialogs, canvas apps, or inaccessible desktop UIs work.
 
@@ -167,11 +169,54 @@ h2a verify catalog/create_invoice.h2a.zip
 h2a install catalog/create_invoice.h2a.zip --approve --directory other_workflows
 ```
 
-`.h2a.zip` contains exactly a manifest and workflow JSON. Checksums detect corruption; **they do not establish who published a file**. Nothing executable gets extracted, and overwrite is disallowed. Always inspect third-party workflows and permitted hosts/actions before installing. The **catalog is local**, not an online hosted marketplace. Community registry submission instructions are in [marketplace/README.md](marketplace/README.md).
+`.h2a.zip` contains exactly a manifest and workflow JSON. Unsigned v1 checksums detect corruption; optional **Ed25519-signed v2 packages** support a pinned publisher public key. A valid signature alone does not establish a trustworthy publisher. Nothing executable gets extracted, and overwrite is disallowed. Always inspect third-party workflows and permitted hosts/actions before installing. The **catalog includes a local installed folder and a public JSON index**, not a hosted account marketplace. Community registry submission instructions are in [marketplace/README.md](marketplace/README.md).
 
 ## Local REST API
 
-`h2a serve` exposes only `127.0.0.1`, not the internet. The dashboard uses an ephemeral `X-H2A-Token` API header and checks Host/Origin against DNS rebinding. Use `h2a openapi --output openapi.json` or [API documentation](docs/API.md).
+`h2a serve` exposes only `127.0.0.1`, not the internet. The dashboard uses an ephemeral `X-H2A-Token` API header and checks Host/Origin against DNS rebinding. Runs show step progress and offer cooperative cancellation; two simultaneous executions are allowed, with extra requests receiving HTTP 429. Use `h2a openapi --output openapi.json` or [API documentation](docs/API.md).
+
+## Native Windows UI Automation (stable accessibility selectors)
+
+Unlike screen coordinates, Windows UIA can address a control by its accessible name or automation ID. These actions are optional, and **do not require recording typed keys**. Windows must grant the required application accessibility permissions. On macOS/Linux, use pointer actions for now.
+
+```bash
+python -m pip install -e '.[accessibility]'
+h2a inspect-desktop --window 'Untitled - Notepad'
+```
+
+Example desktop steps (replace window title / ID with your actual output):
+
+```json
+{"action":"ui_fill","windowTitle":"Untitled - Notepad","automationId":"15","value":"{{note}}"}
+{"action":"ui_assert_text","windowTitle":"Untitled - Notepad","name":"Editor","text":"{{note}}","retries":2,"retryDelayMs":750}
+```
+
+The Windows UIA `ui_fill` action supports Unicode through the target's ValuePattern, without using clipboard or keystroke logging. Ambiguous/hidden controls fail closed. Password controls are not selectable.
+
+## Local recurring schedules and cancellation
+
+```bash
+h2a plan create_invoice --data '{"customer_name":"Alex","amount":25}'
+h2a schedule add create_invoice --every-minutes 60 --approve --data-file /absolute/private/inputs.json
+h2a schedule list
+h2a scheduler               # Foreground worker; stop with Ctrl+C
+h2a schedule remove create_invoice
+```
+
+Scheduled input file values are **never saved in the registry or history**. On POSIX, input JSON files must be readable only by their owner (`chmod 600`). Schedule intervals are 1–10,080 minutes. Nothing runs in the background until the user starts `h2a scheduler` (or configures an OS service). The worker deliberately records no output values. For REST cancellation, use `POST /api/runs/{runId}/cancel` with the dashboard's token. Cancellation is cooperative and may take until the current GUI or ADB operation completes.
+
+## Signed community packages
+
+```bash
+pip install -e '.[signing]'
+h2a keygen --private ~/h2a-publisher.pem --public ~/h2a-publisher.pub.pem
+chmod 600 ~/h2a-publisher.pem             # POSIX only
+h2a pack create_invoice --publisher 'your-handle' --sign-key ~/h2a-publisher.pem --output create_invoice.h2a.zip
+h2a verify create_invoice.h2a.zip --trust-key ~/h2a-publisher.pub.pem
+h2a install create_invoice.h2a.zip --trust-key ~/h2a-publisher.pub.pem --approve --directory other_workflows
+```
+
+Do not commit private keys. A package can be cryptographically valid while its actions are untrustworthy: review permissions and hosts before approval. Unsigned v1 packages remain supported.
 
 ## Examples, tests and release state
 
@@ -186,14 +231,4 @@ h2a install catalog/create_invoice.h2a.zip --approve --directory other_workflows
 
 Apache-2.0. Contributions and tests on real devices are especially welcome. [Contributing guide](CONTRIBUTING.md) · [Code of conduct](CODE_OF_CONDUCT.md) · [Architecture](docs/ARCHITECTURE.md) · [Issue tracker](https://github.com/karemfree1282-gif/human2api/issues).
 
-**Want it to be trustworthy? Star the repository, try the sample, report a reproducible bug, and help close the hardware test gap.**
-
-### Public workflow directory (preview)
-
-The repository includes a [read-only community index](marketplace/index.json). Run `h2a catalog --remote` to view metadata; inspect the source before using `h2a install-remote create_invoice --approve`. Download and install both require HTTPS and pinned SHA-256, but publisher identities are **not cryptographically verified**. All remote actions are opt-in.
-
-## Private run history (v0.2.2)
-
-The local dashboard shows recent run metadata, including workflow name, target, completion state, timestamp, duration and action count. Entries survive a server restart in `.h2a/history.db` (ignored by Git), with 30-day retention and at most 1,000 records. **Workflow input values, AI prompts, results, screenshots and error messages are not written to this journal**. Individual run responses remain in memory during the current server session. The journal is intentionally not encrypted at rest; apply normal device encryption and filesystem permissions for privacy.
-
-The UI also has a **Public index** tab backed by the pinned HTTPS catalog (retrieval only; installing requires CLI opt-in). This is not a publisher-signed marketplace.
+**Help validate it: try the sandbox, report a reproducible bug, and contribute hardware acceptance results.**

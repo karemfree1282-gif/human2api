@@ -33,9 +33,19 @@ def create_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("record-desktop", help="Record only desktop mouse clicks/scrolls (F12 to stop); NEVER records typed text")
     p.add_argument("--name", required=True)
     p.add_argument("--directory", type=Path, default=Path("workflows"))
+    # Windows-only UIA smart capture enriches clicks, never captures typed content.
+    sub.choices["record-desktop"].add_argument("--smart", action="store_true", help="On Windows, prefer stable UIA automation IDs for clicks")
     p = sub.add_parser("record-android", help="Interactively teach an authorized Android device with ADB")
     p.add_argument("--name", required=True)
     p.add_argument("--serial", help="Explicit authorized Android device ID")
+    p.add_argument("--directory", type=Path, default=Path("workflows"))
+    p = sub.add_parser("inspect-desktop", help="List non-secret accessibility selectors in a Windows UIA window")
+    p.add_argument("--window", required=True, help="Exact title of the permitted window")
+    p.add_argument("--limit", type=int, default=60)
+    p.add_argument("--directory", type=Path, default=Path("workflows"))
+    p = sub.add_parser("keygen", help="Create a private/public Ed25519 package signing keypair")
+    p.add_argument("--private", required=True, type=Path)
+    p.add_argument("--public", required=True, type=Path)
     p.add_argument("--directory", type=Path, default=Path("workflows"))
     p = sub.add_parser("devices", help="List authorized Android ADB devices")
     p.add_argument("--directory", type=Path, default=Path("workflows"))
@@ -43,12 +53,15 @@ def create_parser() -> argparse.ArgumentParser:
     p.add_argument("name")
     p.add_argument("--output", required=True, type=Path)
     p.add_argument("--publisher", default="community")
+    p.add_argument("--sign-key", type=Path, help="Ed25519 private key; creates a signed v2 package")
     p.add_argument("--directory", type=Path, default=Path("workflows"))
     p = sub.add_parser("verify", help="Verify a local .h2a.zip package before installation")
     p.add_argument("package", type=Path)
+    p.add_argument("--trust-key", type=Path, help="Pin the publisher public key for verification")
     p.add_argument("--directory", type=Path, default=Path("workflows"))
     p = sub.add_parser("install", help="Install a checksummed workflow package into local workflows")
     p.add_argument("package", type=Path)
+    p.add_argument("--trust-key", type=Path, help="Reject packages not signed by this pinned public key")
     p.add_argument("--approve", action="store_true")
     p.add_argument("--directory", type=Path, default=Path("workflows"))
     p = sub.add_parser("catalog", help="List local catalog packages or a remote HTTPS registry")
@@ -60,22 +73,37 @@ def create_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("install-remote", help="Download a SHA256-pinned JSON workflow from the community index (opt-in)")
     p.add_argument("name")
     p.add_argument("--approve", action="store_true")
+    p.add_argument("--trust-key", type=Path)
     p.add_argument("--catalog-url", default=DEFAULT_CATALOG_URL)
     p.add_argument("--directory", type=Path, default=Path("workflows"))
 
-    for cmd in ["list", "check", "run", "mcp", "serve", "openapi"]:
+    p = sub.add_parser("schedule", help="Manage local recurring automation schedules")
+    p.add_argument("action", choices=["list", "add", "remove"])
+    p.add_argument("name", nargs="?", help="Workflow name for add/remove")
+    p.add_argument("--every-minutes", type=int, default=60)
+    p.add_argument("--data-file", type=Path, help="Private JSON file; values never enter schedules.json")
+    p.add_argument("--approve", action="store_true", help="Permit recurring write actions without an interactive prompt")
+    p.add_argument("--directory", type=Path, default=Path("workflows"))
+    p = sub.add_parser("scheduler", help="Run explicitly enabled local schedules; remains foreground")
+    p.add_argument("--directory", type=Path, default=Path("workflows"))
+    p.add_argument("--once", action="store_true")
+    p.add_argument("--poll-seconds", type=int, default=10)
+
+    for cmd in ["list", "check", "run", "plan", "history", "mcp", "serve", "openapi"]:
         p = sub.add_parser(cmd)
         p.add_argument("--directory", type=Path, default=Path("workflows"))
-        if cmd in {"check", "run"}:
+        if cmd in {"check", "run", "plan"}:
             p.add_argument("name", help="Filename without .json (or an explicit .json path)")
-        if cmd == "run":
+        if cmd in {"run", "plan"}:
             p.add_argument("--data", default="{}", help="JSON object of workflow inputs")
             p.add_argument("--data-file", type=Path, help="Read JSON inputs from a file instead")
-            p.add_argument("--approve", action="store_true", help="Explicitly approve write workflows")
-            p.add_argument("--show-browser", action="store_true")
-            p.add_argument("--browser-path", default=None)
-            p.add_argument("--heal-selectors", action="store_true", help="Opt in to safe, local selector recovery")
-            p.add_argument("--ai-heal", action="store_true", help="Explicitly permit sending sanitized UI metadata to your configured AI provider")
+            if cmd == "run":
+                p.add_argument("--approve", action="store_true", help="Explicitly approve write workflows")
+            if cmd == "run":
+                p.add_argument("--show-browser", action="store_true")
+                p.add_argument("--browser-path", default=None)
+                p.add_argument("--heal-selectors", action="store_true", help="Opt in to safe, local selector recovery")
+                p.add_argument("--ai-heal", action="store_true", help="Explicitly permit sending sanitized UI metadata to your configured AI provider")
         if cmd == "serve":
             p.add_argument("--port", type=int, default=int(os.environ.get("H2A_PORT", "8765")))
             p.add_argument("--no-open", action="store_true", help="Do not open the local dashboard")
@@ -95,9 +123,31 @@ def main(argv: list[str] | None = None) -> int:
     args = create_parser().parse_args(argv)
     try:
         directory = args.directory
-        if args.command == "record-desktop":
+        if args.command in {"schedule", "scheduler"}:
+            from .scheduler import LocalScheduler
+            store = LocalScheduler(directory)
+            if args.command == "scheduler":
+                store.serve(poll_seconds=args.poll_seconds, once=args.once)
+            elif args.action == "list":
+                print(json.dumps(store.list(), indent=2))
+            elif not args.name:
+                raise WorkflowError("schedule add/remove requires a workflow name")
+            elif args.action == "add":
+                print(json.dumps(store.add(args.name, every_minutes=args.every_minutes,
+                    approve_writes=args.approve, data_file=args.data_file), indent=2))
+            else:
+                store.remove(args.name)
+                print("Removed schedule:", args.name)
+        elif args.command == "keygen":
+            from .trust import generate_keypair
+            generate_keypair(args.private, args.public)
+            print("Keys created. Keep the private key outside the repository; share only the public key.")
+        elif args.command == "inspect-desktop":
+            from .desktop_access import inspect_window
+            print(json.dumps(inspect_window(args.window, limit=args.limit), indent=2))
+        elif args.command == "record-desktop":
             from .desktop import record_desktop
-            print("Saved:", record_desktop(args.name, directory))
+            print("Saved:", record_desktop(args.name, directory, smart=args.smart))
         elif args.command == "record-android":
             from .android import record_android
             print("Saved:", record_android(args.name, directory, serial=args.serial))
@@ -105,16 +155,16 @@ def main(argv: list[str] | None = None) -> int:
             from .android import adb_devices
             print(json.dumps({"authorizedDevices": adb_devices()}, indent=2))
         elif args.command == "pack":
-            print("Packed:", pack_workflow(_path(directory, args.name), args.output, publisher=args.publisher))
+            print("Packed:", pack_workflow(_path(directory, args.name), args.output, publisher=args.publisher, sign_key=args.sign_key))
         elif args.command == "verify":
-            manifest, _ = inspect_package(args.package)
-            print(json.dumps({"verified": True, "manifest": manifest}, indent=2))
+            manifest, _ = inspect_package(args.package, trust_key=args.trust_key)
+            print(json.dumps({"integrityValid": True, "signatureValid": manifest["packageVersion"] == 2, "publisherTrusted": args.trust_key is not None, "manifest": manifest}, indent=2))
         elif args.command == "install":
-            print("Installed:", install_package(args.package, directory, approve=args.approve))
+            print("Installed:", install_package(args.package, directory, approve=args.approve, trust_key=args.trust_key))
         elif args.command == "catalog":
             print(json.dumps(remote_catalog(args.catalog_url) if args.remote else local_catalog(args.catalog_dir), indent=2))
         elif args.command == "install-remote":
-            print("Installed:", install_remote(args.name, directory, approve=args.approve, catalog_url=args.catalog_url))
+            print("Installed:", install_remote(args.name, directory, approve=args.approve, catalog_url=args.catalog_url, trust_key=args.trust_key))
         elif args.command == "record":
             print("No form values or passwords are stored. Inspect the workflow before sharing it.", file=sys.stderr)
             path = record(args.url, name=args.name, output_dir=directory, browser_path=args.browser_path, headless=args.headless)
@@ -124,6 +174,18 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "check":
             wf = load_workflow(_path(directory, args.name))
             print(f"Valid: {wf['name']} | {len(wf['steps'])} steps | {len(wf.get('inputs', {}))} inputs")
+        elif args.command == "history":
+            from .history import RunJournal
+            print(json.dumps(RunJournal(directory.parent / ".h2a" / "history.db").list(), indent=2))
+        elif args.command == "plan":
+            from .models import validate_inputs
+            wf = load_workflow(_path(directory, args.name))
+            raw = args.data_file.read_text(encoding="utf-8") if args.data_file else args.data
+            values = validate_inputs(wf, json.loads(raw))
+            print(json.dumps({"workflow": wf["name"], "target": wf.get("target", "browser"),
+                "permissions": wf.get("permissions", "write"), "stepCount": len(wf["steps"]),
+                "actions": [step["action"] for step in wf["steps"]],
+                "inputsSupplied": list(values), "inputsRedacted": True, "executed": False}, indent=2))
         elif args.command == "run":
             raw = args.data_file.read_text(encoding="utf-8") if args.data_file else args.data
             inputs = json.loads(raw)

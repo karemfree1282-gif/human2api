@@ -39,3 +39,20 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install -e .
       - run: python scripts/doctor.py && h2a --version && h2a list && h2a check create_invoice && h2a openapi --output /tmp/openapi.json
+
+  cross-platform-unit:
+    name: ${{ matrix.os }} - hardware-free unit tests
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install core and dev dependencies
+        run: python -m pip install -e '.[dev,signing]'
+      - name: Run hardware-free tests
+        run: python -m pytest -q -m "not browser"

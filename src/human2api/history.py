@@ -51,7 +51,7 @@ class RunJournal:
             self._prune(db)
 
     def finish(self, run_id: str, state: str, duration_ms: int) -> None:
-        if state not in {"completed", "failed", "interrupted"}:
+        if state not in {"completed", "failed", "interrupted", "cancelled"}:
             raise ValueError("invalid final state")
         with self._connection() as db:
             db.execute("UPDATE runs SET state=?, completed_at=?, duration_ms=? WHERE run_id=?",

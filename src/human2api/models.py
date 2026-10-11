@@ -19,14 +19,14 @@ PARAM_RE = re.compile(r"{{\s*([a-z][a-z0-9_]*)\s*}}")
 SERIAL_RE = re.compile(r"^[A-Za-z0-9._:-]{1,100}$")
 PACKAGE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+$")
 BROWSER_ACTIONS = frozenset({"click", "fill", "select", "check", "wait", "assert_text", "extract_text", "download", "screenshot", "navigate", "press", "hover", "scroll", "drag", "wait_ms", "switch_tab"})
-DESKTOP_ACTIONS = frozenset({"click", "double_click", "move", "scroll", "type_text", "hotkey", "press", "wait_ms", "screenshot", "assert_image"})
+DESKTOP_ACTIONS = frozenset({"click", "double_click", "move", "scroll", "type_text", "hotkey", "press", "wait_ms", "screenshot", "assert_image", "ui_click", "ui_fill", "ui_assert_text", "ui_extract_text"})
 ANDROID_ACTIONS = frozenset({"tap", "tap_text", "swipe", "input_text", "keyevent", "wait_ms", "assert_text", "extract_text", "screenshot"})
 ACTIONS = BROWSER_ACTIONS | DESKTOP_ACTIONS | ANDROID_ACTIONS
 TARGET_ACTIONS = {"browser": BROWSER_ACTIONS, "desktop": DESKTOP_ACTIONS, "android": ANDROID_ACTIONS}
 INPUT_TYPES = frozenset({"string", "number", "boolean"})
 MAX_STEPS = 250
 MAX_WORKFLOW_BYTES = 256 * 1024
-WRITE_ACTIONS = frozenset({"click", "fill", "select", "check", "download", "press", "drag", "double_click", "move", "scroll", "type_text", "hotkey", "tap", "tap_text", "swipe", "input_text", "keyevent"})
+WRITE_ACTIONS = frozenset({"ui_click", "ui_fill", "click", "fill", "select", "check", "download", "press", "drag", "double_click", "move", "scroll", "type_text", "hotkey", "tap", "tap_text", "swipe", "input_text", "keyevent"})
 
 
 class WorkflowError(ValueError):
@@ -149,12 +149,24 @@ def validate_workflow(raw: Any) -> dict[str, Any]:
             raise WorkflowError(f"step {index}: checked must be a bool or template string")
         if action == "assert_text":
             _check_string(step.get("text"), f"step {index} text")
-        if action == "extract_text":
+        if action in {"extract_text", "ui_extract_text"}:
             output = _check_string(step.get("as"), f"step {index} as", max_length=63)
             if not NAME_RE.fullmatch(output):
                 raise WorkflowError(f"step {index}: invalid output name")
         if action in {"screenshot", "download"} and "filename" in step:
             _safe_filename(step["filename"])
+        if action in {"ui_click", "ui_fill", "ui_assert_text", "ui_extract_text"}:
+            _check_string(step.get("windowTitle"), f"step {index} windowTitle", max_length=200)
+            if not any(step.get(key) for key in ("automationId", "name")):
+                raise WorkflowError(f"step {index}: UI automation requires an automationId or name")
+            for field in ("automationId", "name", "controlType"):
+                if field in step:
+                    _check_string(step[field], f"step {index} {field}", max_length=200)
+            if action == "ui_fill":
+                if not isinstance(step.get("value"), str) or len(step["value"]) > 10000:
+                    raise WorkflowError(f"step {index}: ui_fill value must be a string")
+            if action == "ui_assert_text":
+                _check_string(step.get("text"), f"step {index} text")
         if action == "assert_image":
             _safe_filename(step.get("image"))
         if action in {"press", "keyevent"}:
@@ -178,7 +190,7 @@ def validate_workflow(raw: Any) -> dict[str, Any]:
                     _int_between(step.get(dim), f"step {index} {dim}", 0, 16384)
             if action in {"tap_text", "extract_text"}:
                 _check_string(step.get("selector"), f"step {index} selector", max_length=300)
-        common = {"action", "timeoutMs"}
+        common = {"action", "timeoutMs", "retries", "retryDelayMs"}
         extras = {
             "click": {"selector", "alternatives", "x", "y", "role", "label", "textHint"},
             "double_click": {"x", "y"}, "move": {"x", "y"},
@@ -197,6 +209,10 @@ def validate_workflow(raw: Any) -> dict[str, Any]:
             "wait_ms": {"durationMs"}, "switch_tab": {"index"},
             "type_text": {"value"}, "hotkey": {"keys"},
             "assert_image": {"image"},
+            "ui_click": {"windowTitle", "automationId", "name", "controlType"},
+            "ui_fill": {"windowTitle", "automationId", "name", "controlType", "value"},
+            "ui_assert_text": {"windowTitle", "automationId", "name", "controlType", "text"},
+            "ui_extract_text": {"windowTitle", "automationId", "name", "controlType", "as"},
             "tap": {"x", "y"}, "tap_text": {"selector", "by"},
             "swipe": {"x", "y", "x2", "y2", "durationMs"},
             "input_text": {"value"}, "keyevent": {"key"},
@@ -208,6 +224,14 @@ def validate_workflow(raw: Any) -> dict[str, Any]:
             raise WorkflowError(f"step {index}: unknown fields {', '.join(sorted(unknown))}")
         if "alternatives" in step and (not isinstance(step["alternatives"], list) or len(step["alternatives"]) > 8 or not all(isinstance(s, str) and 0 < len(s) < 2048 for s in step["alternatives"])):
             raise WorkflowError(f"step {index}: alternatives must be a small array of selectors")
+        if "retries" in step:
+            _int_between(step["retries"], f"step {index} retries", 0, 3)
+            if action not in {"wait", "assert_text", "extract_text", "assert_image", "ui_assert_text", "ui_extract_text"}:
+                raise WorkflowError(f"step {index}: retries are permitted only for read-only assertions and extraction")
+        if "retryDelayMs" in step:
+            _int_between(step["retryDelayMs"], f"step {index} retryDelayMs", 100, 10000)
+            if "retries" not in step:
+                raise WorkflowError(f"step {index}: retryDelayMs requires retries")
         if "timeoutMs" in step:
             _int_between(step["timeoutMs"], f"step {index} timeoutMs", 100, 120000)
         if "durationMs" in step:

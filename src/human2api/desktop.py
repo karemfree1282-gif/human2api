@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .models import WorkflowError, template
+from .execution import RunCancelled, check_cancelled, interruptible_wait, run_step_with_retry
 
 
 SAFE_KEYS = {"enter", "tab", "esc", "escape", "space", "backspace", "delete", "up", "down", "left", "right", "home", "end", "pageup", "pagedown", "ctrl", "shift", "alt", "command", "win", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12", "a", "c", "v", "x", "z", "s", "n", "p"}
@@ -29,10 +30,11 @@ def _gui() -> Any:
     return pyautogui
 
 
-def execute_desktop(workflow: dict[str, Any], values: dict[str, Any], artifacts: Path, on_step: Callable | None = None) -> dict[str, Any]:
-    gui = _gui()
+def execute_desktop(workflow: dict[str, Any], values: dict[str, Any], artifacts: Path, on_step: Callable | None = None, *, cancel_event: Any = None) -> dict[str, Any]:
+    gui = _gui() if any(step["action"] not in {"ui_click", "ui_fill", "ui_assert_text", "ui_extract_text", "wait_ms"} for step in workflow["steps"]) else None
     outputs: dict[str, Any] = {}
     for i, step in enumerate(workflow["steps"], 1):
+        check_cancelled(cancel_event)
         act = step["action"]
         if on_step:
             on_step(i, act, "running")
@@ -61,7 +63,7 @@ def execute_desktop(workflow: dict[str, Any], values: dict[str, Any], artifacts:
                     raise WorkflowError("desktop hotkey contains an unsupported key")
                 gui.hotkey(*keys)
             elif act == "wait_ms":
-                time.sleep(step["durationMs"] / 1000)
+                interruptible_wait(step["durationMs"], cancel_event)
             elif act == "screenshot":
                 filename = step.get("filename", f"desktop-{i}.png")
                 if not filename.lower().endswith(".png"):
@@ -69,6 +71,11 @@ def execute_desktop(workflow: dict[str, Any], values: dict[str, Any], artifacts:
                 result = artifacts / filename
                 gui.screenshot().save(str(result))
                 outputs.setdefault("artifacts", []).append(str(result))
+            elif act in {"ui_click", "ui_fill", "ui_assert_text", "ui_extract_text"}:
+                from .desktop_access import execute_ui_step
+                result = run_step_with_retry(step, lambda: execute_ui_step(step, values), cancel_event=cancel_event)
+                if act == "ui_extract_text":
+                    outputs[step["as"]] = result
             elif act == "assert_image":
                 # The trusted image must reside alongside the workflow's assets;
                 # arbitrary filesystem reads are deliberately unsupported.
@@ -79,13 +86,17 @@ def execute_desktop(workflow: dict[str, Any], values: dict[str, Any], artifacts:
                 if not reference.is_file() or reference.is_symlink():
                     raise WorkflowError("reference image not found under assets/")
                 try:
-                    match = gui.locateOnScreen(str(reference), confidence=0.90)
+                    match = run_step_with_retry(step, lambda: gui.locateOnScreen(str(reference), confidence=0.90), cancel_event=cancel_event)
                 except (OSError, ValueError) as exc:
                     raise WorkflowError("image recognition unavailable; install opencv-python") from exc
                 if match is None:
                     raise WorkflowError("reference image not visible on screen")
             else:
                 raise WorkflowError(f"unsupported desktop action: {act}")
+        except RunCancelled:
+            if on_step:
+                on_step(i, act, "cancelled")
+            raise
         except Exception as exc:
             if on_step:
                 on_step(i, act, "failed")
@@ -98,7 +109,7 @@ def execute_desktop(workflow: dict[str, Any], values: dict[str, Any], artifacts:
     return outputs
 
 
-def record_desktop(name: str, output_dir: Path, *, description: str = "Guided desktop mouse automation") -> Path:
+def record_desktop(name: str, output_dir: Path, *, description: str = "Guided desktop mouse automation", smart: bool = False) -> Path:
     """Record mouse clicks/scroll, stop with F12. Never hooks or stores typed keys.
 
     Users add `type_text` steps with {{variable}} in the JSON editor. This is
@@ -114,7 +125,11 @@ def record_desktop(name: str, output_dir: Path, *, description: str = "Guided de
     steps: list[dict[str, Any]] = []
     def click(x: float, y: float, button: Any, pressed: bool) -> None:
         if pressed and str(button).endswith("left") and not stop.is_set() and len(steps) < 250:
-            steps.append({"action": "click", "x": int(x), "y": int(y)})
+            result = None
+            if smart:
+                from .desktop_access import selector_at_point
+                result = selector_at_point(int(x), int(y))
+            steps.append(result or {"action": "click", "x": int(x), "y": int(y)})
     def scroll(x: float, y: float, dx: float, dy: float) -> None:
         if not stop.is_set() and len(steps) < 250 and dy:
             steps.append({"action": "scroll", "delta": int(max(-100, min(100, dy)))})
@@ -124,6 +139,8 @@ def record_desktop(name: str, output_dir: Path, *, description: str = "Guided de
             return False
         return None
     print("DESKTOP RECORDING: mouse clicks and scrolling only. Press F12 to stop.")
+    if smart:
+        print("Windows UIA smart capture enabled. Stable non-password automation IDs replace coordinates when available.")
     print("NO keyboard text/passwords are captured. Review coordinates before sharing.")
     with mouse.Listener(on_click=click, on_scroll=scroll) as mouse_listener, keyboard.Listener(on_press=key_press):
         stop.wait()

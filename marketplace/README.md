@@ -13,14 +13,6 @@
 
 Examples must have appropriate redistribution permission. Do not use published workflows to access accounts or services without authorization.
 
-## Public read-only index (new)
+## Signed package v2 (Ed25519)
 
-The repository hosts a versioned static JSON index at [`marketplace/index.json`](index.json). You can browse it directly on GitHub, or fetch it through HTTPS:
-
-```bash
-h2a catalog --remote
-# Read the workflow source first, then:
-h2a install-remote create_invoice --approve --directory my_other_workflows
-```
-
-`install-remote` first checks the published package URL against the pinned SHA-256 in the HTTPS index, verifies the internal workflow digest, validates permitted actions, and refuses to overwrite an existing workflow. You are responsible for reviewing package code, publishers and permissions. Anyone controlling the remote index can replace both the package and its hash; this is **not a signed trust model** and there is no review/rating login system.
+Publisher workflow authors may use `h2a keygen`, then sign `h2a pack ... --sign-key private.pem`. Users who obtained the publisher's public key via a trusted independent channel can use `h2a verify ... --trust-key publisher-public.pem` or `h2a install ... --trust-key publisher-public.pem --approve`. The signature binds publisher metadata and the checksum of the workflow JSON. A signature never means workflows are safe by itself. Unsigned v1 packages remain supported for backward compatibility. The public index currently lists URLs and hashes, not verified publisher accounts.

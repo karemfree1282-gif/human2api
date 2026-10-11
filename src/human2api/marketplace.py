@@ -2,7 +2,7 @@
 
 Packages can contain ONLY a validated workflow JSON and a strict manifest.
 No programs, plugins, scripts, binary attachments or arbitrary remote execution.
-Hashes protect transfers; they are NOT a publisher identity/signature.
+Unsigned v1 uses checksums; signed v2 adds Ed25519 publisher authenticity with pinned public keys.
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def _canonical(value: Any) -> bytes:
     return (json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False) + "\n").encode("utf-8")
 
 
-def pack_workflow(workflow_path: Path, destination: Path, *, publisher: str = "community") -> Path:
+def pack_workflow(workflow_path: Path, destination: Path, *, publisher: str = "community", sign_key: Path | None = None) -> Path:
     workflow = load_workflow(workflow_path)
     if not publisher or len(publisher) > 80 or any(c in publisher for c in "\r\n\\"):
         raise WorkflowError("publisher must be a short printable name")
@@ -40,6 +40,15 @@ def pack_workflow(workflow_path: Path, destination: Path, *, publisher: str = "c
         "workflowSha256": hashlib.sha256(payload).hexdigest(),
         "license": "review-original-workflow-license",
     }
+    if sign_key is not None:
+        from .trust import sign_bytes
+        manifest["packageVersion"] = 2
+        # Include the public key in the signed body to prevent key substitution.
+        pub, _ = sign_bytes(b"", sign_key)
+        manifest["signatureAlgorithm"] = "Ed25519"
+        manifest["publicKey"] = pub
+        _, signature = sign_bytes(_canonical(manifest), sign_key)
+        manifest["signature"] = signature
     destination = Path(destination)
     if destination.suffix.lower() != ".zip" or not destination.name.endswith(".h2a.zip"):
         raise WorkflowError("package filename must end with .h2a.zip")
@@ -52,7 +61,7 @@ def pack_workflow(workflow_path: Path, destination: Path, *, publisher: str = "c
     return destination
 
 
-def inspect_package(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+def inspect_package(path: Path, *, trust_key: Path | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
     path = Path(path)
     if not path.is_file() or path.stat().st_size > MAX_PACKAGE:
         raise WorkflowError("package is missing or exceeds size limit")
@@ -66,10 +75,25 @@ def inspect_package(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
             mf = json.loads(bundle.read("manifest.json"))
             wf_bytes = bundle.read("workflow.json")
             wf = json.loads(wf_bytes)
-        if not isinstance(mf, dict) or mf.get("packageVersion") != PKG_VERSION:
+        if not isinstance(mf, dict) or mf.get("packageVersion") not in {1, 2}:
             raise WorkflowError("unsupported package manifest")
-        if set(mf) != {"packageVersion", "name", "description", "target", "publisher", "workflowSha256", "license"}:
+        fields = {"packageVersion", "name", "description", "target", "publisher", "workflowSha256", "license"}
+        if mf["packageVersion"] == 2:
+            fields.update({"signatureAlgorithm", "publicKey", "signature"})
+        if set(mf) != fields:
             raise WorkflowError("invalid package manifest fields")
+        if mf["packageVersion"] == 2:
+            if mf["signatureAlgorithm"] != "Ed25519":
+                raise WorkflowError("unsupported package signature scheme")
+            from .trust import verify_bytes
+            pub = mf["publicKey"]
+            signature = mf["signature"]
+            if not isinstance(pub, str) or not isinstance(signature, str):
+                raise WorkflowError("package signature fields must be strings")
+            # The canonical form signs every manifest property except the signature.
+            verify_bytes(_canonical({k: v for k, v in mf.items() if k != "signature"}), pub, signature, trust_key=trust_key)
+        elif trust_key is not None:
+            raise WorkflowError("unsigned package cannot satisfy trusted publisher verification")
         if hashlib.sha256(wf_bytes).hexdigest() != mf["workflowSha256"]:
             raise WorkflowError("package checksum mismatch")
         validate_workflow(wf)
@@ -80,10 +104,10 @@ def inspect_package(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
         raise WorkflowError("invalid workflow package") from exc
 
 
-def install_package(path: Path, directory: Path, *, approve: bool = False) -> Path:
+def install_package(path: Path, directory: Path, *, approve: bool = False, trust_key: Path | None = None) -> Path:
     if not approve:
         raise WorkflowError("installing a third-party workflow requires --approve after inspecting its actions")
-    manifest, workflow = inspect_package(path)
+    manifest, workflow = inspect_package(path, trust_key=trust_key)
     target = workflow_file(directory, workflow["name"])
     if target.exists() or target.is_symlink():
         raise WorkflowError("installed workflow already exists; refusing to overwrite")
@@ -128,7 +152,7 @@ def local_catalog(directory: Path) -> list[dict[str, Any]]:
             continue
         try:
             manifest, _ = inspect_package(path)
-            results.append({**manifest, "file": str(path), "verified": True})
+            results.append({**manifest, "file": str(path), "verified": True, "signatureValid": manifest["packageVersion"] == 2, "publisherTrusted": False})
         except (WorkflowError, OSError):
             continue
     return results
@@ -187,7 +211,7 @@ def remote_catalog(url: str = DEFAULT_CATALOG_URL) -> list[dict[str, Any]]:
     return items
 
 
-def install_remote(name: str, directory: Path, *, approve: bool, catalog_url: str = DEFAULT_CATALOG_URL) -> Path:
+def install_remote(name: str, directory: Path, *, approve: bool, catalog_url: str = DEFAULT_CATALOG_URL, trust_key: Path | None = None) -> Path:
     """Explicit catalog fetch + checksum-verified package installation."""
     if not approve:
         raise WorkflowError("remote installation requires --approve after inspecting workflow permissions")
@@ -197,7 +221,7 @@ def install_remote(name: str, directory: Path, *, approve: bool, catalog_url: st
         raise WorkflowError("workflow not found in remote catalog")
     with tempfile.TemporaryDirectory(prefix="h2a-verify-") as tmp:
         package = download_package(match["url"], match["sha256"], directory=Path(tmp))
-        manifest, workflow = inspect_package(package)
+        manifest, workflow = inspect_package(package, trust_key=trust_key)
         if manifest["name"] != name or workflow.get("target", "browser") != match["target"]:
             raise WorkflowError("package does not match remote index metadata")
-        return install_package(package, directory, approve=True)
+        return install_package(package, directory, approve=True, trust_key=trust_key)
