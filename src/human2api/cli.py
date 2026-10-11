@@ -15,7 +15,7 @@ from .mcp_server import serve_mcp
 from .models import WorkflowError, list_workflows, load_workflow, workflow_file
 from .recorder import record
 from .runner import run_workflow
-from .marketplace import pack_workflow, inspect_package, install_package, local_catalog
+from .marketplace import pack_workflow, inspect_package, install_package, local_catalog, remote_catalog, install_remote, DEFAULT_CATALOG_URL
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -51,8 +51,16 @@ def create_parser() -> argparse.ArgumentParser:
     p.add_argument("package", type=Path)
     p.add_argument("--approve", action="store_true")
     p.add_argument("--directory", type=Path, default=Path("workflows"))
-    p = sub.add_parser("catalog", help="List .h2a.zip packages in a local catalog directory")
+    p = sub.add_parser("catalog", help="List local catalog packages or a remote HTTPS registry")
     p.add_argument("--catalog-dir", type=Path, default=Path("catalog"))
+    p.add_argument("--remote", action="store_true", help="Query the community JSON index")
+    p.add_argument("--catalog-url", default=DEFAULT_CATALOG_URL, help="Remote catalog index HTTPS URL")
+    p.add_argument("--directory", type=Path, default=Path("workflows"))
+
+    p = sub.add_parser("install-remote", help="Download a SHA256-pinned JSON workflow from the community index (opt-in)")
+    p.add_argument("name")
+    p.add_argument("--approve", action="store_true")
+    p.add_argument("--catalog-url", default=DEFAULT_CATALOG_URL)
     p.add_argument("--directory", type=Path, default=Path("workflows"))
 
     for cmd in ["list", "check", "run", "mcp", "serve", "openapi"]:
@@ -104,7 +112,9 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "install":
             print("Installed:", install_package(args.package, directory, approve=args.approve))
         elif args.command == "catalog":
-            print(json.dumps(local_catalog(args.catalog_dir), indent=2))
+            print(json.dumps(remote_catalog(args.catalog_url) if args.remote else local_catalog(args.catalog_dir), indent=2))
+        elif args.command == "install-remote":
+            print("Installed:", install_remote(args.name, directory, approve=args.approve, catalog_url=args.catalog_url))
         elif args.command == "record":
             print("No form values or passwords are stored. Inspect the workflow before sharing it.", file=sys.stderr)
             path = record(args.url, name=args.name, output_dir=directory, browser_path=args.browser_path, headless=args.headless)

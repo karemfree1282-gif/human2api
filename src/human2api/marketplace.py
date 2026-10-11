@@ -20,6 +20,8 @@ from .models import WorkflowError, load_workflow, save_workflow, validate_workfl
 
 PKG_VERSION = 1
 MAX_PACKAGE = 512 * 1024
+MAX_REGISTRY = 128 * 1024
+DEFAULT_CATALOG_URL = "https://raw.githubusercontent.com/karemfree1282-gif/human2api/main/marketplace/index.json"
 
 
 def _canonical(value: Any) -> bytes:
@@ -95,7 +97,7 @@ def download_package(url: str, expected_sha256: str, *, directory: Path) -> Path
         raise WorkflowError("package downloads require a direct HTTPS URL")
     if len(expected_sha256) != 64 or any(c not in "0123456789abcdef" for c in expected_sha256):
         raise WorkflowError("expected_sha256 must be a lowercase SHA-256 hex digest")
-    req = Request(url, headers={"User-Agent": "Human2API/0.2"})
+    req = Request(url, headers={"User-Agent": "Human2API/0.2.1"})
     from .healing import _NoRedirect
     from urllib.request import build_opener
     with build_opener(_NoRedirect()).open(req, timeout=15) as res:
@@ -130,3 +132,72 @@ def local_catalog(directory: Path) -> list[dict[str, Any]]:
         except (WorkflowError, OSError):
             continue
     return results
+
+
+def remote_catalog(url: str = DEFAULT_CATALOG_URL) -> list[dict[str, Any]]:
+    """Read a public HTTPS JSON index; never executes any downloaded content.
+
+    The server's `sha256` field protects package *integrity only*. Index/host
+    control determines which SHA is trusted; no publisher signatures yet.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.fragment:
+        raise WorkflowError("remote catalog URL must be HTTPS without credentials")
+    from urllib.request import build_opener
+    from .healing import _NoRedirect
+    try:
+        with build_opener(_NoRedirect()).open(Request(url, headers={"User-Agent": "Human2API/0.2.1"}), timeout=12) as response:
+            if int(response.headers.get("Content-Length", "0")) > MAX_REGISTRY:
+                raise WorkflowError("remote catalog is too large")
+            payload = response.read(MAX_REGISTRY + 1)
+        if len(payload) > MAX_REGISTRY:
+            raise WorkflowError("remote catalog is too large")
+        registry = json.loads(payload)
+    except WorkflowError:
+        raise
+    except (OSError, ValueError, TypeError) as exc:
+        raise WorkflowError("remote catalog could not be downloaded or parsed") from exc
+    if not isinstance(registry, dict) or registry.get("formatVersion") != 1:
+        raise WorkflowError("unsupported remote catalog format")
+    packages = registry.get("packages")
+    if not isinstance(packages, list) or len(packages) > 100:
+        raise WorkflowError("remote catalog has an invalid package list")
+    items = []
+    from .models import NAME_RE
+    for entry in packages:
+        if not isinstance(entry, dict) or set(entry) != {"name", "version", "publisher", "target", "description", "url", "sha256"}:
+            raise WorkflowError("invalid remote catalog entry")
+        name, checksum = entry["name"], entry["sha256"]
+        if not isinstance(name, str) or not NAME_RE.fullmatch(name):
+            raise WorkflowError("invalid remote package name")
+        if not isinstance(checksum, str) or len(checksum) != 64 or any(c not in "0123456789abcdef" for c in checksum):
+            raise WorkflowError("invalid remote package checksum")
+        if entry["target"] not in {"browser", "android", "desktop"}:
+            raise WorkflowError("invalid remote package target")
+        if not all(isinstance(entry[k], str) and 0 < len(entry[k]) <= 300 for k in ("version", "publisher", "description")):
+            raise WorkflowError("invalid remote package metadata")
+        if not isinstance(entry["url"], str):
+            raise WorkflowError("remote package URL must use HTTPS")
+        target_url = urlparse(entry["url"])
+        if target_url.scheme != "https" or not target_url.hostname or target_url.username or target_url.password or target_url.fragment:
+            raise WorkflowError("remote package URL must use HTTPS without fragments or credentials")
+        items.append(entry)
+    if len({entry["name"] for entry in items}) != len(items):
+        raise WorkflowError("remote catalog contains duplicate package names")
+    return items
+
+
+def install_remote(name: str, directory: Path, *, approve: bool, catalog_url: str = DEFAULT_CATALOG_URL) -> Path:
+    """Explicit catalog fetch + checksum-verified package installation."""
+    if not approve:
+        raise WorkflowError("remote installation requires --approve after inspecting workflow permissions")
+    catalog = remote_catalog(catalog_url)
+    match = next((entry for entry in catalog if entry["name"] == name), None)
+    if match is None:
+        raise WorkflowError("workflow not found in remote catalog")
+    with tempfile.TemporaryDirectory(prefix="h2a-verify-") as tmp:
+        package = download_package(match["url"], match["sha256"], directory=Path(tmp))
+        manifest, workflow = inspect_package(package)
+        if manifest["name"] != name or workflow.get("target", "browser") != match["target"]:
+            raise WorkflowError("package does not match remote index metadata")
+        return install_package(package, directory, approve=True)

@@ -23,3 +23,10 @@ Initial alpha release candidate:
 - Upgraded local dashboard with engine support/skill catalog panels and per-run healing permissions.
 - Kept existing workflow schemaVersion 1 browser files compatible; extended target-specific schema.
 - Added mocked cross-target security tests and documentation explaining hardware-validation gaps.
+
+## 0.2.1 — public read-only community index
+
+- Added HTTPS registry with package-index schema checks, download size bounds and disabled redirects.
+- Added checksum-pinned opt-in installation (`h2a catalog --remote`, `h2a install-remote --approve`).
+- Added public JSON index and an extensive mocked negative-case/integrity test suite.
+- This does not supply signed publisher identity, vetted reviews, or a hosted execution service.

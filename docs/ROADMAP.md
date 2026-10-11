@@ -11,7 +11,7 @@ As of v0.2, this is an **open-source developer preview**. Features below are not
 - Android runner: ADB tap/swipe/text/key events, UIAutomator text selectors, screenshot; interactive Android teaching wizard
 - CLI, ephemeral-auth loopback REST API and typed MCP tools for all targets
 - Optional local semantic selector healing; explicitly approved AI selector advice via compatible model endpoint
-- Package packing, checksum verification, manual approval installation and local catalog
+- Package packing, checksum verification, manual approval installation, local catalog and HTTPS read-only remote index with SHA-256-pinned downloads
 - Self-contained fake invoice demo and CI test suite with mocked device backends
 
 ## Integration validation still needed

@@ -167,7 +167,7 @@ h2a verify catalog/create_invoice.h2a.zip
 h2a install catalog/create_invoice.h2a.zip --approve --directory other_workflows
 ```
 
-`.h2a.zip` contains exactly a manifest and workflow JSON. Checksums detect corruption; **they do not establish who published a file**. Nothing executable gets extracted, and overwrite is disallowed. Always inspect third-party workflows and permitted hosts/actions before installing. The **catalog is local**, not an online hosted marketplace. Community registry submission instructions are in [marketplace/README.md](marketplace/README.md).
+`.h2a.zip` contains exactly a manifest and workflow JSON. Checksums detect corruption; **they do not establish who published a file**. Nothing executable gets extracted, and overwrite is disallowed. Always inspect third-party workflows and permitted hosts/actions before installing. There is a **local catalog and a public read-only HTTPS index**. It is not a managed marketplace with signed publishers, trust ratings or user accounts. Community registry submission instructions are in [marketplace/README.md](marketplace/README.md).
 
 ## Local REST API
 
@@ -187,3 +187,7 @@ h2a install catalog/create_invoice.h2a.zip --approve --directory other_workflows
 Apache-2.0. Contributions and tests on real devices are especially welcome. [Contributing guide](CONTRIBUTING.md) · [Code of conduct](CODE_OF_CONDUCT.md) · [Architecture](docs/ARCHITECTURE.md) · [Issue tracker](https://github.com/karemfree1282-gif/human2api/issues).
 
 **Want it to be trustworthy? Star the repository, try the sample, report a reproducible bug, and help close the hardware test gap.**
+
+### Public workflow directory (preview)
+
+The repository includes a [read-only community index](marketplace/index.json). Run `h2a catalog --remote` to view metadata; inspect the source before using `h2a install-remote create_invoice --approve`. Download and install both require HTTPS and pinned SHA-256, but publisher identities are **not cryptographically verified**. All remote actions are opt-in.
