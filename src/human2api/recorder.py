@@ -51,7 +51,9 @@ RECORDER_SCRIPT = r"""
   const metadata = (el) => {
     const selectors = preferred(el);
     if (!selectors.length) return null;
-    return {selector: selectors[0], alternatives: selectors.slice(1, 6)};
+    const label = el.getAttribute('aria-label') || '';
+    const role = el.getAttribute('role') || (el.tagName === 'BUTTON' ? 'button' : '');
+    return {selector: selectors[0], alternatives: selectors.slice(1, 6), ...(label ? {label:label.slice(0,150)} : {}), ...(role ? {role:role.slice(0,70)} : {})};
   };
   document.addEventListener('change', (ev) => {
     const el = ev.target;
@@ -119,12 +121,23 @@ def workflow_from_events(name: str, description: str, start_url: str, events: li
     steps: list[dict[str, Any]] = []
     for event in events:
         action = event.get("action")
+        if action == "switch_tab":
+            index = event.get("index")
+            if isinstance(index, int) and not isinstance(index, bool) and 0 <= index <= 20:
+                steps.append({"action": "switch_tab", "index": index})
+            continue
         if action not in {"click", "fill", "select", "check"}:
             continue
         selector = event.get("selector")
         if not isinstance(selector, str) or not selector:
             continue
         step = {"action": action, "selector": selector}
+        frame = event.get("frame")
+        if isinstance(frame, str) and frame:
+            step["frame"] = frame[:2048]
+        for hint in ("label", "role"):
+            if isinstance(event.get(hint), str) and 0 < len(event[hint]) < 150:
+                step[hint] = event[hint]
         fallbacks = event.get("alternatives")
         if isinstance(fallbacks, list) and fallbacks:
             step["alternatives"] = [s for s in fallbacks[:5] if isinstance(s, str) and s]
@@ -173,21 +186,47 @@ def record(url: str, *, name: str, output_dir: str | Path = "workflows", browser
         try:
             context = browser.new_context()
             page = context.new_page()
+            tabs = [page]
+            active_tab = 0
             def bridge(source: Any, payload: Any) -> None:
-                if source.get("page") != page or source.get("frame") != page.main_frame:
-                    return
-                if not isinstance(payload, dict):
+                nonlocal active_tab
+                tab = source.get("page")
+                frame = source.get("frame")
+                if not isinstance(payload, dict) or tab is None or frame is None:
                     return
                 if payload.get("action") == "stop":
                     done.set()
                     return
+                if tab not in tabs:
+                    tabs.append(tab)
+                index = tabs.index(tab)
+                if index != active_tab and len(events) < 248:
+                    events.append({"action": "switch_tab", "index": index})
+                    active_tab = index
+                if frame != tab.main_frame:
+                    # Address first-level iframes by a stable id/name; never
+                    # write potentially sensitive iframe URL strings to disk.
+                    if frame.parent_frame != tab.main_frame:
+                        return
+                    try:
+                        iframe = frame.frame_element()
+                        id_attr = iframe.get_attribute("id")
+                        name_attr = iframe.get_attribute("name")
+                        if id_attr and re.fullmatch(r"[a-zA-Z0-9_-]{1,100}", id_attr):
+                            payload["frame"] = "iframe[id=" + json.dumps(id_attr) + "]"
+                        elif name_attr and re.fullmatch(r"[a-zA-Z0-9_-]{1,100}", name_attr):
+                            payload["frame"] = "iframe[name=" + json.dumps(name_attr) + "]"
+                        else:
+                            return
+                    except Exception:
+                        return
                 if len(events) < 250:
                     events.append(payload)
             context.expose_binding("h2aBridge", bridge)
             context.add_init_script(script=RECORDER_SCRIPT)
             page.goto(url, wait_until="domcontentloaded", timeout=30000)
             print("Recording: interact with the Chromium window and press Stop & save.")
-            while not done.is_set() and not page.is_closed():
+            while not done.is_set() and any(not p.is_closed() for p in context.pages):
                 try:
                     page.wait_for_timeout(200)
                 except Exception:

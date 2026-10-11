@@ -1,68 +1,63 @@
-# Architecture: small, inspectable, offline-first
+# Architecture: portable workflows, constrained executors
 
 ```text
-+------------------------+              +-----------------------+
-| Human (Chromium)       |              | Agent (MCP client)    |
-| clicks and form edits  |              | h2a_create_invoice()  |
-+-----------+------------+              +-----------+-----------+
-            | DOM events                              | JSON-RPC stdio
-            v                                         v
-+------------------------+              +-----------------------+
-| Recorder (recorder.py) |              | MCP adapter           |
-| CSS selectors / fields |              | typed input schemas   |
-| values never captured  |              +-----------+-----------+
-+-----------+------------+                          |
-            |                                       |
-            v                                       v
-+------------------------------------------------------------+
-| WORKFLOW JSON: source of truth, visible in dashboard       |
-| schemaVersion / allowedHosts / inputs / actions / outputs  |
-+----------------------------+-------------------------------+
-                             |
-             +---------------+----------------+
-             |                                |
-             v                                v
-+--------------------------+     +---------------------------+
-| Playwright replay runner |     | Local-only REST/dashboard |
-| fresh browser context    |     | 127.0.0.1 + token         |
-| verify / extract / files |     | OpenAPI / editor / demo   |
-+--------------------------+     +---------------------------+
+[Human browser recorder]         [Human pointer recorder]       [Human guided ADB recorder]
+             \                            |                           /
+              +---------------------------+--------------------------+
+                                          |
+                         [Validated workflow JSON, schemaVersion 1]
+                               |                    |
+                     [MCP JSON-RPC stdio]      [REST / dashboard]
+                               |                    |
+                               +----------+---------+
+                                          |
+                                [Policy + input validation]
+                                    write approval
+                                          |
+                    +---------------------+--------------------------+
+                    |                     |                          |
+                [Playwright]          [PyAutoGUI]               [ADB CLI]
+              isolated browser      active OS session        selected device
+                    |                     |                          |
+                DOM assertions       image assertion           UIAutomator
+                screenshots          screenshot                screenshot
+                    +---------------------+--------------------------+
+                                          |
+                                [Local run artifacts]
 ```
 
-## Trust boundaries
+## Backward compatibility and target model
 
-- Recording runs on the user's machine. Javascript captures action selectors and input field identities. **It does not send or persist typed input values.** Password input names and CSS selectors may still reveal sensitive metadata and should be inspected.
-- Replaying runs in a fresh Chromium context. It does not inherit the user's actual Chrome sessions/cookies. Authentication-dependent flows require a future explicit, secured session-management feature.
-- A workflow is constrained to enumerated operations. It cannot contain Python or Javascript to evaluate, but **clicks and navigation can trigger powerful actions on the target site**.
-- Only main document navigations are checked against `allowedHosts`. This is not a network sandbox for subresources, JS fetches or other browser internals.
-- Dashboard REST binds to loopback only, rejects unexpected Host/Origin, requires an ephemeral `X-H2A-Token` for `/api/*`, and stores execution artifacts under `runs/` (ignored by Git). If your machine is compromised, local server controls do not create a security boundary.
-- MCP has no UI consent mechanism by itself. It refuses write flows unless `H2A_ALLOW_WRITE=1`; downstream MCP clients are expected to request user approval.
+A `schemaVersion: 1` workflow without `target` is a **browser** workflow. A new explicit `"target":"desktop"` or `"target":"android"` uses its own strictly allowed action set, with no `startUrl`. Workflows remain plain inspectable JSON. The file's `inputs` define typed required values, with no persisted defaults for secrets.
 
-## Workflow format
+`models.py` is the single source of truth for allowed actions and type validation. `runner.py` routes to browser/desktop/Android executors and enforces write approval before touching the target. It does not invoke user-provided shell commands, Python snippets, or JS actions from workflow files.
 
-A versioned JSON object with `name`, `startUrl`, `description`, `permissions`, `allowedHosts`, `inputs`, and `steps`. Supported actions:
+## Recording
 
-| Action | Fields | Behavior |
-| --- | --- | --- |
-| `navigate` | `url` | Navigate (allowed host only) |
-| `click` | `selector` | Click target |
-| `fill` | `selector`, `value` | Fill text input |
-| `select` | `selector`, `value` | Choose an HTML select option |
-| `check` | `selector`, `checked` | Set checkbox/radio state |
-| `wait` | `selector` | Wait for visible element |
-| `assert_text` | `selector`, `text` | Verify substring in element |
-| `extract_text` | `selector`, `as` | Return text in an output field |
-| `download` | `selector`, optional `filename` | Click, await download, save locally |
-| `screenshot` | optional `filename` | Capture viewport to local file |
+- **Browser**: an injected event listener captures element selectors and input field identities, *not* input values. First-level iframes must have stable ID or name. Tab changes become `switch_tab` steps. Cross-domain navigation is constrained by explicit host list, but remote JS and subresources remain out of network-sandbox scope.
+- **Desktop**: `pynput` monitors pointer clicks and scroll events during an explicit session that stops on F12. No typed keys or clipboard contents are intercepted. Desktop text steps must be authored using placeholders.
+- **Android**: interactive CLI translates user-entered commands into actions and executes selected actions on the authorized device via ADB; text input placeholders never store entered credentials.
 
-Actions support `timeoutMs` (100-120000) and `alternatives` (up to eight CSS fallbacks). All URL/template strings use `{{field_name}}`, no eval.
+## Executor trust boundaries
 
-## Near-term design improvements
+- **Browser**: starts a fresh Playwright context with service workers blocked; navigation to unlisted hosts is aborted. Semantic healing checks unique visible ARIA/label targets. With explicit per-run consent only, an OpenAI-compatible endpoint can recommend CSS selectors from sanitized interactive element metadata, not full HTML. Suggestions are not applied permanently.
+- **Desktop**: GUI is controlled through optional PyAutoGUI in the user's current desktop login. It has no OS sandbox. Upper-left-corner failsafe applies; keyboard shortcuts are allowlisted.
+- **Android**: ADB CLI commands are invoked using argument lists. Device selection must be unambiguous/authorized. XML UI lookup requires exactly one matching element. ADB text support is limited to a safe ASCII subset.
+- **MCP**: runs over stdio, not a network socket, and requires `H2A_ALLOW_WRITE=1` for write workflows; the connected MCP client must provide actual human approval.
+- **REST**: local loopback binding, strict Host/Origin and unpredictable per-server API token. Does not support public ingress or independent user authentication.
+- **Portable packages**: two JSON files plus a verified checksum; no executable content, no overwrite on install. Sha256 is not a publisher trust signature.
 
-- Prefer stable accessibility selectors and user-guided fallbacks.
-- Add recorder pause/resume, tab synchronization, navigation snapshots and screenshot redaction.
-- Add explicit approved browser session stores (encrypted locally) and step-by-step diff reviews.
-- Add per-operation allowlisting and auditable permissions rather than broad workflow approval.
-- Run the browser in a stronger restricted sandbox for untrusted sites.
+## Main modules
 
-See [ROADMAP.md](ROADMAP.md).
+- `models.py`: data and action policy
+- `recorder.py`: browser capture
+- `desktop.py`: optional GUI executor and pointer recorder
+- `android.py`: authorized device driver + guided recorder
+- `healing.py`: opt-in browser selector suggestions
+- `marketplace.py`: verified local-only workflow packages
+- `runner.py`: orchestration + Chromium target
+- `mcp_server.py`, `http_server.py`, `cli.py`: caller-facing APIs
+
+## Risks and future work
+
+Native cross-platform accessibility selectors, Unicode text handling, genuine device tests, secure credential vault, team RBAC, online signed marketplace, and network isolation are future work. See [Security](../SECURITY.md) and [Roadmap](ROADMAP.md).

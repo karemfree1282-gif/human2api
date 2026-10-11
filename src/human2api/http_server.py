@@ -18,6 +18,7 @@ from urllib.parse import unquote, urlsplit
 from . import __version__
 from .models import NAME_RE, WorkflowError, input_json_schema, list_workflows, load_workflow, save_workflow, workflow_file
 from .runner import run_workflow
+from .marketplace import local_catalog
 
 MAX_POST_SIZE = 256 * 1024
 
@@ -31,7 +32,7 @@ def openapi_schema(directory: Path, port: int = 8765) -> dict[str, Any]:
                 "operationId": "run_" + wf["name"],
                 "summary": wf["description"],
                 "security": [{"LocalToken": []}],
-                "requestBody": {"required": True, "content": {"application/json": {"schema": {"type": "object", "properties": {"inputs": input_json_schema(wf), "approve": {"type": "boolean", "description": "Explicit permission to run write workflows"}}, "required": ["inputs"], "additionalProperties": False}}}},
+                "requestBody": {"required": True, "content": {"application/json": {"schema": {"type": "object", "properties": {"inputs": input_json_schema(wf), "approve": {"type": "boolean", "description": "Explicit permission to run write workflows"}, "healSelectors": {"type": "boolean", "description": "Enable local semantic recovery"}, "aiHeal": {"type": "boolean", "description": "Explicitly consent to sending sanitized UI metadata to your configured provider"}}, "required": ["inputs"], "additionalProperties": False}}}},
                 "responses": {"202": {"description": "Execution accepted; poll GET /api/runs/{runId}"}, "400": {"description": "Validation error"}},
             }
         }
@@ -127,6 +128,12 @@ class RequestHandler(BaseHTTPRequestHandler):
         if not path.startswith("/api/") or not self._auth_ok():
             return self._json(401, {"error": "invalid API token"})
         try:
+            if path == "/api/platforms":
+                import importlib.util
+                import shutil
+                return self._json(200, {"browser": {"available": True}, "desktop": {"dependencyAvailable": importlib.util.find_spec("pyautogui") is not None}, "android": {"adbInstalled": shutil.which("adb") is not None}, "aiHealing": {"optInOnly": True}})
+            if path == "/api/catalog":
+                return self._json(200, {"packages": local_catalog(self.server.workflows.parent / "catalog")})
             if path == "/api/workflows":
                 return self._json(200, {"workflows": list_workflows(self.server.workflows)})
             if path == "/api/openapi.json":
@@ -167,7 +174,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     self.server.runs[run_id] = {"state": "running", "workflow": name, "createdAt": int(time.time())}
                 def task() -> None:
                     try:
-                        result = run_workflow(workflow, body.get("inputs") or {}, approve_writes=approve, artifacts_dir=self.server.workflows.parent / "runs")
+                        result = run_workflow(workflow, body.get("inputs") or {}, approve_writes=approve, artifacts_dir=self.server.workflows.parent / "runs", heal_selectors=body.get("healSelectors") is True or body.get("aiHeal") is True, ai_heal=body.get("aiHeal") is True)
                         status = {"state": "completed", "result": result}
                     except (WorkflowError, ValueError, OSError) as exc:
                         status = {"state": "failed", "error": str(exc)[:600]}

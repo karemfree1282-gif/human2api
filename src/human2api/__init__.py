@@ -1,3 +1,3 @@
-"""Human2API - teach a browser task once, reuse it everywhere."""
+"""Human2API local-first automation."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

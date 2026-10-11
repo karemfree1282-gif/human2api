@@ -1,17 +1,19 @@
-# FAQ
+# Frequently asked questions
 
-**Is Human2API an autonomous AI agent?** No. v0.1 is a deterministic browser task recorder and runner. It exposes tools over the MCP protocol for agent clients; it does not contain its own AI model.
+**Is Human2API an autonomous all-app AI agent?** No. It is an inspectable task recorder and deterministic runner. Browser selector suggestions may optionally be produced by an external AI model with explicit consent, but the project does not claim self-healing for every UI or app.
 
-**Can it use desktop applications or Android?** Not in v0.1. Only the top-level Chromium tab is supported for recording.
+**Does it support desktop applications and Android?** The v0.2 developer preview has optional PyAutoGUI desktop automation and ADB Android automation, exposed through CLI/MCP/REST, with mocked unit tests. The native app/device acceptance-test matrix is not complete. The desktop recorder captures pointer actions only; Android uses a guided command recorder.
 
-**Does it store what I type during recording?** The recorder discards typed form values and replaces them with named inputs. URLs, selectors and attribute names can still contain personal data; review the generated JSON before sharing.
+**Does it save my passwords or what I type while recording?** The browser recorder discards form values; the desktop recorder never captures keys or clipboard contents; the Android guided recorder saves required input placeholders, not demonstrated values. CSS selector metadata, URLs and UI labels may still reveal personal information. Review workflow files before sharing.
 
-**Does it send anything to a cloud backend?** The app has no built-in telemetry or cloud sync. Browser navigation naturally sends requests to websites you visit, and external assets on those pages can make third-party requests.
+**Does it send my data to a cloud?** No telemetry or automatic cloud sync. Target websites naturally receive traffic. Opt-in AI selector healing sends limited interactive element metadata to your configured AI endpoint; it is off by default.
 
-**Can I run this on a production bank or payment site?** We do not recommend doing that with this alpha. Test on an isolated account first, inspect every step, and understand the browser and network permissions.
+**Does the project include a hosted public marketplace?** No, only a local verifiable package catalog. Checksums are not identity signatures, and installing third-party workflows needs explicit approval.
 
-**Is the local REST API safe to expose on the internet?** No. The HTTP server binds to 127.0.0.1 and assumes a trusted local machine. Never reverse-proxy it publicly as-is.
+**Will it operate my banking or payment app safely?** Do not use it on high-stakes accounts or production data until you have validated every action and target-specific security properties.
 
-**How do I contribute?** Start with a reproducible issue or an improvement to selectors/tests, read [CONTRIBUTING.md](../CONTRIBUTING.md), and submit a focused pull request.
+**Can I expose the REST API to the internet?** No. It is intended for loopback access from a trusted desktop session only.
 
-**Why is this alpha?** Many edge cases remain: multiple tabs, cross-origin iframes, desktop apps, resilient DOM recordings across web app upgrades, and human-in-the-loop approvals from arbitrary MCP clients.
+**Why are some tests skipped?** The current development environment blocks Playwright navigation to local web URLs. DOM action tests and mocked platform tests run, but networked browser E2E and real-device tests must run on an unrestricted test host or CI runner.
+
+**How can I help?** Run a reproducible task on real Windows/macOS/Linux or Android hardware, report environment and versions, and submit bug fixes/tests via the [contribution guide](../CONTRIBUTING.md).

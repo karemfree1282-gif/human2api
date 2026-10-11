@@ -1,47 +1,34 @@
-# Roadmap
+# Release status and roadmap
 
-We prioritize security, reliability, and things ordinary users can actually verify. These features are **plans, not shipping capabilities**.
+As of v0.2, this is an **open-source developer preview**. Features below are not claimed as complete until actually tested.
 
-## v0.1 - Browser automation kernel (current)
+## Implemented and unit-tested
 
-- [x] JSON workflow schema / strict validation
-- [x] Browser event recorder (single tab)
-- [x] Dynamic named input variables, no saved form values
-- [x] Replay / selector fallback / assertions / downloads
-- [x] Local dashboard / OpenAPI / MCP stdio
-- [x] Apache-2.0 license / project governance / CI suite
+- Backward-compatible inspectable workflow JSON
+- Browser recorder: DOM clicks, form fields, checkbox/select; cross-tab and first-level iframe support (stable iframe ID/name)
+- Browser runner: Playwright, screenshots, downloads, tab switching, explicit host allowlist, fallback selectors, assertions
+- Desktop runner: mouse and keyboard actions, screen capture and optional OpenCV image assertion; optional mouse-only desktop recorder
+- Android runner: ADB tap/swipe/text/key events, UIAutomator text selectors, screenshot; interactive Android teaching wizard
+- CLI, ephemeral-auth loopback REST API and typed MCP tools for all targets
+- Optional local semantic selector healing; explicitly approved AI selector advice via compatible model endpoint
+- Package packing, checksum verification, manual approval installation and local catalog
+- Self-contained fake invoice demo and CI test suite with mocked device backends
 
-## v0.2 - Better recording (good first issues)
+## Integration validation still needed
 
-- [ ] End-to-end cross-browser CI (Firefox, WebKit) and Windows/macOS CI
-- [ ] Record navigation and textarea blur edge cases
-- [ ] Record keyboard shortcuts and file upload fixtures safely
-- [ ] Pause, resume and inspect before saving
-- [ ] Semantic locator strategies using accessible roles and labels
-- [ ] Add a direct API token workflow outside the local dashboard
-- [ ] Improve input type inference for `number` and `date`
+- Real-world Windows/macOS/Linux UX recording and replay; coordinate/keyboard differences; native accessibility selectors
+- Real Android phones across OEM versions; Unicode text, complex app UI, dialogs, multiple display modes
+- Browser multi-tab and iframe scenarios with various modern sites and authenticated flows
+- Fail/retry handling for transient network issues and durable run history
+- Test/enable GitHub Pages deployment after GitHub Actions settings and runner availability are confirmed
+- Real-user permission prompts in MCP clients
 
-## v0.3 - More durable workflows
+## Later major initiatives
 
-- [ ] Self-healing selector suggestions (never silently execute changed operations)
-- [ ] Workflow diff/approval UI
-- [ ] Per-action approvals and dry-run preview
-- [ ] Encrypted opt-in session profiles
-- [ ] Browser trace viewer and automatic replay reports
+- Native accessibility tree-based desktop recorder rather than only pointer replay
+- Android companion AccessibilityService for consent-based native event capture (no unrequested keylogging)
+- Offline computer vision fallback with local models for desktop/mobile
+- Signed publisher identities and trusted online marketplace
+- Cloud sync, team RBAC, scheduling, audit events and encrypted credentials
 
-## v0.4+ - Beyond the browser
-
-- [ ] Cross-platform desktop automation via audited OS accessibility APIs
-- [ ] Optional Android accessibility bridge
-- [ ] Signed workflow registry + provenance, versions and reproducible checks
-- [ ] Community templates with verified tests and threat review
-- [ ] Optional model providers for proposing (not blindly applying) recovery
-
-## Open questions
-
-1. How should workflows express accessibility selectors without coupling to one browser?
-2. How do we capture navigation robustly when a site involves third-party SSO?
-3. What should an audit-friendly permission format look like at step granularity?
-4. How can we sandbox browser workflows strongly enough to accept third-party templates?
-
-Open an issue using the included templates if you want to help.
+We do not claim 'automate any app flawlessly'. That is an aspiration requiring much more hardware validation and engineering.

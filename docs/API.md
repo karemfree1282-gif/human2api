@@ -66,3 +66,25 @@ This generates a separate typed `POST /api/run/<name>` path for each valid workf
 - `navigation is outside allowedHosts`: review target domains and add specific hostnames, with no wildcards.
 - `no matching element`: update the CSS selector or add alternatives in the workflow JSON.
 - `invalid Host/Origin`: access `http://127.0.0.1:<port>` or `http://localhost:<port>` directly, not through a reverse proxy.
+
+## v0.2 target selection
+
+Every workflow may set `"target": "browser"` (default for legacy v0.1 JSON), `"desktop"`, or `"android"`. For desktop/Android, omit `startUrl` and `allowedHosts`. Android may specify `deviceSerial` to enforce connection to a specific authorized device.
+
+Run requests accept optional booleans `healSelectors` (local semantic fallback) and `aiHeal` (explicit permission to send sanitized browser element metadata to the configured model provider). `aiHeal` implies `healSelectors`. These options are browser-only. The server also exposes `GET /api/platforms` and `GET /api/catalog` (both require the local token).
+
+### Desktop actions
+
+`click(x,y)`, `double_click(x,y)`, `move(x,y)`, `scroll(delta)`, `type_text(value)`, `press(key)`, `hotkey(keys[])`, `wait_ms(durationMs)`, `screenshot(filename)`, `assert_image(image)`.
+
+The image assertion loads reference PNGs from `assets/` adjacent to the workflows/runs folders; OpenCV is an optional extra. Screen coordinates must be adjusted for each screen. The desktop recorder records mouse events only.
+
+### Android actions
+
+`tap(x,y)`, `tap_text(selector,by)`, `swipe(x,y,x2,y2,durationMs)`, `input_text(value)`, `keyevent(key)`, `wait_ms(durationMs)`, `assert_text(text)`, `extract_text(selector,as,by)`, `screenshot(filename)`.
+
+`by` is `text` (default), `resource-id`, or `content-desc`, matched exactly in UIAutomator XML. No root, no APK or shell script is installed on the phone. `input_text` is limited to printable ASCII letters/digits/spaces and `.,_@-`.
+
+### Workflow packages
+
+`h2a pack`, `h2a verify`, `h2a catalog` and `h2a install --approve` use a checksummed local JSON-only `.h2a.zip`. Online discovery, third-party signed publishers, or account-based ratings are not implemented.

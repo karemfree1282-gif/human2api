@@ -1,6 +1,6 @@
 # Security policy
 
-**Status:** v0.1 alpha. No public vulnerability disclosure channel is configured beyond GitHub private vulnerability reporting (if enabled by the repository owner). Do not post exploit details in public issues.
+**Status:** v0.2 developer preview. No public vulnerability disclosure channel is configured beyond GitHub private vulnerability reporting (if enabled by the repository owner). Do not post exploit details in public issues.
 
 ## Report privately
 
@@ -25,4 +25,13 @@ A malicious page could change the selector target, trick a workflow into clickin
 
 | Version | Security fixes |
 | --- | --- |
-| 0.1.x | Best effort during alpha |
+| 0.1.x | Legacy alpha, limited maintenance |
+| 0.2.x | Best-effort fixes during developer preview |
+
+## v0.2 platform threat model
+
+- **Desktop:** PyAutoGUI operates in the user's active GUI session. Authorize only on your own machine and review every coordinate/shortcut. Moving the pointer to the upper-left triggers the PyAutoGUI failsafe. The pointer-only recorder never captures keystrokes/passwords; runtime `type_text` values may still be visible to desktop programs.
+- **Android:** ADB works only with an authorized connected device. The adapter uses fixed argument arrays (no host shell), a strict device serial, exact UI text matching and an allowlisted subset of keys. `adb shell input text` supports only restricted ASCII and may expose arguments through device/system diagnostics. Use a test device and account.
+- **AI selector recovery:** OFF by default. With explicit opt-in, up to 70 element metadata records can leave your machine for the configured OpenAI-compatible endpoint; IDs and aria labels may contain identifying information. The model can only return a CSS selector, checked for a single visible match, and never silently changes source workflows. This feature is not suited to confidential apps without an approved provider/data-policy review.
+- **Community packages:** A `.h2a.zip` has exactly two JSON files. Sha256 guarantees only integrity, **not** author identity or safety. Explicitly review permissions, hosts, and steps prior to installing and running. No executable bundle payloads are allowed.
+- **General:** UI navigation allowlists are not a sandbox for page subresources. Do not expose the loopback REST server via tunneling or reverse proxies. There is no cloud authentication, secret vault, native mobile accessibility service, or signed marketplace in this release.

@@ -35,7 +35,7 @@ function drawList() {
     const entry=node('button',{className:'workflow-entry'+(state.selected===workflow.name?' selected':''),onclick:()=>selectWorkflow(workflow.name)});
     const icon=node('div',{className:'workflow-icon',text:'⌁'});
     const info=node('div',{className:'workflow-info'},[
-      node('strong',{text:workflow.name}), node('span',{text:workflow.description}), node('small',{className:'workflow-meta',text:`${workflow.steps} actions · ${workflow.inputs} inputs · ${workflow.permissions}`})
+      node('strong',{text:workflow.name}), node('span',{text:workflow.description}), node('small',{className:'workflow-meta',text:`${(workflow.target||'browser').toUpperCase()} · ${workflow.steps} actions · ${workflow.inputs} inputs · ${workflow.permissions}`})
     ]);
     entry.append(icon,info);list.append(entry);
   }
@@ -54,8 +54,8 @@ function drawDetails() {
   details.append(tabs);
   const body=node('div');details.append(body);
   if(state.tab==='steps') {
-    for(const [i,step] of wf.steps.entries()) body.append(node('div',{className:'step-line'},[node('b',{text:String(i+1).padStart(2,'0')}),node('span',{text:`${step.action}   ${step.selector || step.url || step.filename || ''}`})]));
-    body.append(node('div',{className:'detail-note',text:'Selectors are inspectable and editable in the JSON tab. No AI guesses are made at runtime.'}));
+    for(const [i,step] of wf.steps.entries()) body.append(node('div',{className:'step-line'},[node('b',{text:String(i+1).padStart(2,'0')}),node('span',{text:`${step.action}   ${step.selector || step.url || step.filename || (Number.isInteger(step.x)?`(${step.x}, ${step.y})`: '')}`})]));
+    body.append(node('div',{className:'detail-note',text:'All steps can be inspected and edited in JSON. AI healing is disabled by default and needs per-run consent.'}));
     return;
   }
   if(state.tab==='json') {
@@ -78,15 +78,21 @@ function drawDetails() {
   }
   if(!Object.keys(inputRefs).length) fields.append(node('div',{className:'detail-note',text:'This workflow needs no parameters.'}));
   form.append(fields);
-  const approvalWrap=node('label',{className:'approve-label'});const approval=node('input',{type:'checkbox'});approvalWrap.append(approval,node('span',{text:'I approve this workflow to perform actions on the target site.'}));
+  const approvalWrap=node('label',{className:'approve-label'});const approval=node('input',{type:'checkbox'});approvalWrap.append(approval,node('span',{text:'I approve this workflow to interact with the selected '+(wf.target||'browser')+' target.'}));
   if(wf.permissions!=='write')approvalWrap.style.display='none';
+  const healWrap=node('label',{className:'approve-label'}), heal=node('input',{type:'checkbox'});
+  healWrap.append(heal,node('span',{text:'Enable local semantic selector recovery (browser only)'}));
+  const aiWrap=node('label',{className:'approve-label'}), ai=node('input',{type:'checkbox'});
+  aiWrap.append(ai,node('span',{text:'Allow AI recovery: send sanitized UI element metadata to configured AI endpoint (browser only)'}));
+  if((wf.target||'browser') !== 'browser'){healWrap.style.display='none';aiWrap.style.display='none';}
+  ai.addEventListener('change',()=>{if(ai.checked)heal.checked=true;});
   const runButton=node('button',{className:'button button-primary',type:'submit',text:'▶  Run now'});
-  form.append(node('div',{className:'workflow-run-footer'},[approvalWrap,runButton]));
-  const output=node('pre',{className:'run-output',text:'Ready. Run executes in an isolated Chromium context.'});
+  form.append(healWrap,aiWrap,node('div',{className:'workflow-run-footer'},[approvalWrap,runButton]));
+  const output=node('pre',{className:'run-output',text:'Ready. Runs locally on your '+(wf.target||'browser')+' engine. Check permissions before executing.'});
   form.addEventListener('submit',async event=>{
     event.preventDefault();if(wf.permissions==='write'&&!approval.checked){toast('Approve write actions before running.');return;}
     const args={}; for(const [key,{input,spec}] of Object.entries(inputRefs)){ if(spec.type==='boolean')args[key]=input.checked; else if(spec.type==='number')args[key]=Number(input.value); else if(input.value!=='')args[key]=input.value; }
-    try {runButton.disabled=true;output.textContent='Launching Chromium and running steps...';const r=await api('/api/run/'+encodeURIComponent(wf.name),{method:'POST',body:JSON.stringify({inputs:args,approve:approval.checked})});
+    try {runButton.disabled=true;output.textContent='Executing '+(wf.target||'browser')+' workflow...';const r=await api('/api/run/'+encodeURIComponent(wf.name),{method:'POST',body:JSON.stringify({inputs:args,approve:approval.checked,healSelectors:heal.checked,aiHeal:ai.checked})});
       let polls=0;const poll=async()=>{const status=await api('/api/runs/'+r.runId);if(status.state==='running' && polls++<240){setTimeout(poll,500);return;} output.textContent=JSON.stringify(status,null,2);runButton.disabled=false;};await poll();
     }catch(err){output.textContent='Error: '+err.message;runButton.disabled=false;}
   });
@@ -120,3 +126,21 @@ $('spec-link').addEventListener('click', async (event) => {
 });
 $('copy-cli').addEventListener('click',async()=>{try{await navigator.clipboard.writeText($('cli-code').textContent);toast('Copied to clipboard');}catch(err){toast('Clipboard unavailable');}});
 refresh();
+
+async function updateEngineStatus(){
+  try{const p=await api('/api/platforms');
+    if($('desktop-status')) $('desktop-status').textContent=p.desktop.dependencyAvailable?'Desktop dependencies detected':'Install: pip install "human2api[desktop]"';
+    if($('android-status')) $('android-status').textContent=p.android.adbInstalled?'ADB installed. Connect an authorized phone':'Install Android platform-tools (ADB)';
+  }catch(err){ /* status is informational */ }
+}
+async function showCatalog(){
+  const destination=$('catalog-packages');if(!destination)return;
+  try{const catalog=await api('/api/catalog');destination.replaceChildren();
+    if(!catalog.packages.length){destination.append(node('p',{text:'No local workflow packages yet. Create one using: h2a pack create_invoice --output catalog/create_invoice.h2a.zip'}));return;}
+    for(const item of catalog.packages){destination.append(node('article',{className:'catalog-entry'},[node('strong',{text:item.name}),node('small',{text:`${item.target} · ${item.publisher} · checksum verified`}),node('span',{text:item.description})]));}
+  }catch(err){destination.textContent='Could not load catalog: '+err.message;}
+}
+$('catalog-refresh')?.addEventListener('click',showCatalog);
+$('catalog-link')?.addEventListener('click',()=>showCatalog());
+updateEngineStatus();
+showCatalog();

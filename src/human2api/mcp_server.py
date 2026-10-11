@@ -20,7 +20,7 @@ from .runner import run_workflow
 def mcp_tools(directory: Path) -> list[dict[str, Any]]:
     result = [{
         "name": "h2a_list_workflows",
-        "description": "List browser automations installed in this local Human2API instance.",
+        "description": "List installed browser, desktop and Android automations in this local Human2API instance.",
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
         "annotations": {"readOnlyHint": True},
     }]
@@ -28,7 +28,7 @@ def mcp_tools(directory: Path) -> list[dict[str, Any]]:
         workflow = load_workflow(workflow_file(directory, entry["name"]))
         result.append({
             "name": "h2a_" + entry["name"],
-            "description": workflow["description"] + " (Human2API local browser automation)",
+            "description": workflow["description"] + f" (Human2API local {workflow.get('target', 'browser')} automation)",
             "inputSchema": input_json_schema(workflow),
             "annotations": {
                 "readOnlyHint": workflow.get("permissions") == "read",
@@ -46,7 +46,7 @@ def _tool_call(directory: Path, name: str, args: dict[str, Any]) -> dict[str, An
         elif name.startswith("h2a_"):
             workflow = load_workflow(workflow_file(directory, name[4:]))
             write_ok = os.environ.get("H2A_ALLOW_WRITE", "0").lower() in {"1", "true", "yes"}
-            result = run_workflow(workflow, args, approve_writes=write_ok, artifacts_dir=directory.parent / "runs")
+            result = run_workflow(workflow, args, approve_writes=write_ok, artifacts_dir=directory.parent / "runs", heal_selectors=os.environ.get("H2A_HEAL_SELECTORS") == "1", ai_heal=os.environ.get("H2A_AI_HEAL") == "1")
         else:
             raise WorkflowError(f"unknown MCP tool: {name}")
         return {"content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}], "isError": False}
@@ -66,7 +66,7 @@ def handle_message(request: dict[str, Any], directory: Path) -> dict[str, Any] |
                 "protocolVersion": "2025-11-25",
                 "capabilities": {"tools": {"listChanged": False}},
                 "serverInfo": {"name": "human2api", "version": __version__},
-                "instructions": "Human2API tools operate a local Chromium browser. Tools marked write require H2A_ALLOW_WRITE=1 and authorization from the user. No form values are saved in workflows.",
+                "instructions": "Human2API tools operate a local Chromium browser. Tools marked write require H2A_ALLOW_WRITE=1 and authorization from the user. For opt-in AI healing set H2A_HEAL_SELECTORS=1, H2A_AI_HEAL=1 and an appropriate AI endpoint and key. No form values are saved in workflows.",
             }
         elif method == "ping":
             result = {}

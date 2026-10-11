@@ -25,3 +25,9 @@ We particularly need accessibility selector strategies, safer action verificatio
 ## Conduct and licensing
 
 Be respectful and constructive; see CODE_OF_CONDUCT.md. Contributions are licensed under Apache-2.0. By submitting code you confirm you have the rights to contribute it.
+
+## v0.2 platform contributions
+
+Platform executors must use allowlisted actions and avoid executing arbitrary code from workflow JSON. Tests must not require developers to connect a personal desktop or phone; use dependency injection/mocks for base CI, and document actual-hardware test procedures separately. Do not propose passive recording of typed passwords. For Android, test only devices you own and authorize over ADB. For AI selector healing, never send typed form values or full page HTML to providers.
+
+To contribute shareable workflows, follow [community catalog guidelines](marketplace/README.md).

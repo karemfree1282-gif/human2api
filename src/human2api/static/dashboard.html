@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <meta name="description" content="Human2API local dashboard: record, inspect, and reuse deterministic browser workflows as MCP tools and REST APIs.">
+  <meta name="description" content="Human2API local dashboard: browser, desktop and Android workflows to CLI, MCP tools, and REST APIs.">
   <meta name="h2a-token" content="__H2A_LOCAL_TOKEN__">
   <title>Human2API | Your local automation studio</title>
   <link rel="stylesheet" href="/app.css">
@@ -18,17 +18,23 @@
       <div class="side-label">WORKSPACE</div>
       <a class="nav active" href="#workflows"><span class="nav-icon">▦</span> Workflows <span class="nav-counter" id="nav-count">0</span></a>
       <a class="nav" href="/demo" target="_blank" rel="noreferrer"><span class="nav-icon">◈</span> Demo sandbox <span class="external">↗</span></a>
+      <a class="nav" href="#marketplace" id="catalog-link"><span class="nav-icon">◇</span> Local skill catalog <span class="external">↗</span></a>
       <a class="nav" href="#openapi" id="spec-link"><span class="nav-icon">⌁</span> OpenAPI schema <span class="external">↗</span></a>
       <div class="sidebar-bottom"><span class="online-dot"></span> Runs on your machine <small>Local only · No account · No telemetry</small></div>
     </aside>
     <main class="main" id="workflows">
       <header class="topbar"><div class="crumb">Workspace <span>/</span> Overview</div><div class="top-right"><span class="pill"><i></i> ENGINE READY</span><span class="avatar">H2</span></div></header>
       <section class="hero">
-        <div class="eyebrow"><span class="eyebrow-dot">✳</span> OPEN SOURCE AUTOMATION STUDIO <span class="eyebrow-line"></span> v0.1</div>
+        <div class="eyebrow"><span class="eyebrow-dot">✳</span> OPEN SOURCE AUTOMATION STUDIO <span class="eyebrow-line"></span> v0.2</div>
         <h1>Teach it once.<br><span>Automate forever.</span></h1>
-        <p>Record a browser task and turn it into a reusable API or an agent-ready MCP tool. Your inputs stay private; your workflows stay yours.</p>
+        <p>Teach browser, desktop, and Android tasks. Inspect the workflow, verify results, and run it through CLI, REST, or your favorite MCP-enabled AI agent.</p>
         <div class="hero-actions"><button class="button button-primary" id="new-record">◉ &nbsp; New recording <span>↗</span></button><a class="button button-soft" href="/demo" target="_blank" rel="noreferrer">Try demo sandbox <span>↗</span></a></div>
         <div class="hero-art" aria-hidden="true"><div class="orb orb-one"></div><div class="orb orb-two"></div><div class="orb orb-three"></div><div class="orbit-text">HUMAN <span>→</span> WORKFLOW <span>→</span> MCP</div></div>
+      </section>
+      <section class="platform-grid" aria-label="Available automation engines">
+        <article class="platform-card"><div class="platform-icon">◉</div><div><h3>Browser</h3><p>Capture websites, multi-tab sessions and named iframe controls. Playwright runner.</p><small>Recorder + MCP + REST</small></div></article>
+        <article class="platform-card"><div class="platform-icon">▣</div><div><h3>Desktop</h3><p>Mouse, keyboard shortcuts, screenshots and guarded image assertions on your machine.</p><small id="desktop-status">Install optional desktop dependencies</small><code>h2a record-desktop --name my_task</code></div></article>
+        <article class="platform-card"><div class="platform-icon">▤</div><div><h3>Android</h3><p>Tap, swipe, inspect UI XML and run repeatable workflows over ADB.</p><small id="android-status">Connect authorized ADB device</small><code>h2a record-android --name my_task</code></div></article>
       </section>
       <section class="stats" aria-label="Project metrics">
         <div class="stat"><span>WORKFLOWS</span><strong id="metric-workflows">—</strong><small>Ready to run</small></div>
@@ -40,6 +46,7 @@
         <div class="workflow-list" id="workflow-list"><p class="empty-state">Loading workflows…</p></div>
         <div class="details" id="details"><div class="empty-detail"><div class="empty-icon">{ }</div><h3>Select a workflow</h3><p>View its actions, fill inputs, and run it locally.</p></div></div>
       </div>
+      <section class="catalog-panel" id="marketplace" aria-label="Verified local skill packages"><div class="catalog-header"><div><span class="eyebrow eyebrow-small">WORKFLOW MARKETPLACE</span><h2>Share inspectable skills.</h2><p>Only checksummed JSON workflows. No executable packages. Every installation needs explicit approval.</p></div><button class="button button-soft" id="catalog-refresh" type="button">Browse local catalog ↗</button></div><div id="catalog-packages" class="catalog-items" aria-live="polite">Use <code>h2a pack</code> to create a shareable workflow package.</div><p class="catalog-note">The catalog is local. A hosted community marketplace and trust signatures are not live yet.</p></section>
       <section class="terminal" aria-label="Command line quickstart"><div class="terminal-header"><span class="terminal-dots"><i></i><i></i><i></i></span> QUICKSTART <button id="copy-cli" class="terminal-copy">Copy</button></div><pre id="cli-code">pip install -e .
 python -m playwright install chromium
 h2a serve</pre></section>

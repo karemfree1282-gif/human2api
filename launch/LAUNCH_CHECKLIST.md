@@ -41,3 +41,13 @@ Track successful first-run attempts, reproduction rate across sites, open issue 
 - [ ] Only post to communities where a technical Show/Launch is permitted, from an account you control.
 - [ ] Distinguish real recorder video from conceptual features on the roadmap.
 - [ ] Do not mass-DM people, buy stars, or manufacture engagement.
+
+## Relaunch guardrails for v0.2
+
+- [ ] Run `python -m pytest -q` on all supported Python versions.
+- [ ] Run a full end-to-end fake-invoice browser test on an unrestricted machine.
+- [ ] Verify native Windows/macOS/Linux pointer replay and Android ADB workflows on real hardware before declaring the corresponding integrations stable.
+- [ ] Confirm GitHub Actions green (CI, CodeQL, Pages) and investigate any repository/account runner restrictions.
+- [ ] Do not announce a fully autonomous self-healing agent or signed online marketplace; those are **not implemented**.
+- [ ] Record a genuine short demonstration (no fake UI interaction and no private user data).
+- [ ] Publish community posts manually and respectfully; never mass-post or claim number-one status.
