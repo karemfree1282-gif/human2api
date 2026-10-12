@@ -29,7 +29,7 @@ Run `h2a mcp --directory /absolute/path/to/workflows`. UTF-8 JSON-RPC messages a
 Modern clients use 2026-07-28 metadata and `server/discover`. Legacy 2024-11-05, 2025-03-26, 2025-06-18 and 2025-11-25 initialized sessions are handled separately. Unsupported versions produce a structured error. Bounded tool calls do not block the input loop; cancellation/progress work during cooperative waits. Native OS calls may finish before observing cancellation. EOF cancels active work. Pagination binds cursors to a workflow-directory snapshot.
 
 ```json
-{"mcpServers":{"human2api":{"command":"h2a","args":["mcp","--directory":"/absolute/path/to/workflows"],"env":{"H2A_ALLOW_WRITE":"0"}}}}
+{"mcpServers":{"human2api":{"command":"h2a","args":["mcp","--directory","/absolute/path/to/workflows"],"env":{"H2A_ALLOW_WRITE":"0"}}}}
 ```
 
 ## CLI
