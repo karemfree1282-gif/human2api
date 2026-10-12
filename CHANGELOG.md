@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.1 - 2026-10-12
+
+- Reject duplicate Host, Origin, Authorization and local-token headers before processing requests.
+- Revalidate publisher tokens under the SQLite write lock when yanking packages or saving reviews; revocation and rotation cannot race these writes.
+- Reject new ratings on revoked publishers.
+- Add 15 live HTTP/TLS, concurrent publication and authorization regression tests.
+- Add a reproducible local load/cancellation probe in `qa/soak.py`.
+- Native installers, physical-device acceptance and public hosting remain separate, unverified release gates.
+
 ## 0.4.0 - 2026-10-12
 
 ### Added

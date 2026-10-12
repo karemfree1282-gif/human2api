@@ -20,7 +20,7 @@ from . import __version__
 from .models import NAME_RE, WorkflowError, input_json_schema, list_workflows, load_workflow, save_workflow, workflow_file, validate_inputs
 from .runner import run_workflow
 from .execution import RunCancelled
-from .server_limits import BoundedHTTPServer
+from .server_limits import BoundedHTTPServer, unique_security_headers
 from .marketplace import local_catalog, remote_catalog
 from .history import RunJournal
 from .scheduler import LocalScheduler
@@ -145,6 +145,8 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def _host_ok(self) -> bool:
+        if not unique_security_headers(self.headers):
+            return False
         # Reject DNS rebinding to this developer-only service.
         host = self.headers.get("Host", "")
         port = self.server.server_address[1]

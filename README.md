@@ -13,7 +13,7 @@ Browser · Windows UIA · macOS AX · Linux AT-SPI · Android companion
 [Quick start](#quick-start) · [Arabic](docs/README_AR.md) · [Architecture](docs/ARCHITECTURE.md) · [Security](SECURITY.md) · [Acceptance](docs/ACCEPTANCE.md)
 </div>
 
-> **v0.4.0 integration release, not a production certification.** Core code and browser DOM behavior have local automated tests. Native hardware, Android APK execution and hosted deployment require their own acceptance evidence. GitHub Actions was independently confirmed blocked by an **account billing lock**, not by an executed test failure. See [issue #8](https://github.com/karemfree1282-gif/human2api/issues/8).
+> **v0.4.1 integration release, not a production certification.** Core code and browser DOM behavior have local automated tests. Native hardware, Android APK execution and hosted deployment require their own acceptance evidence. GitHub Actions was independently confirmed blocked by an **account billing lock**, not by an executed test failure. See [issue #8](https://github.com/karemfree1282-gif/human2api/issues/8).
 
 Human2API turns an explicitly recorded, reviewed workflow into reusable local automation. The core runs without a cloud account or AI model. Optional AI recovery sends bounded interface metadata only with explicit consent. It never executes model-generated code.
 
@@ -120,3 +120,7 @@ The tool repairs deterministic generated schemas, validates workflow contracts, 
 Native distributions and Android debug APKs have build workflows. Published releases remain **drafts** until their release-gate jobs pass and maintainers review acceptance evidence. Signing/notarization requires owner-managed identities. [Release and acceptance procedure](docs/ACCEPTANCE.md).
 
 Apache 2.0 · [Contributing](CONTRIBUTING.md) · [Security boundaries](SECURITY.md)
+
+## Latest security and acceptance checks
+
+The 0.4.1 patch rejects ambiguous HTTP headers and closes registry revocation/rotation write races. See [the reproducible QA procedure](qa/README.md) and run `python qa/soak.py --output evidence/soak.json` for synthetic loopback load checks. This is not physical-device, native-installer, or public-hosting certification.

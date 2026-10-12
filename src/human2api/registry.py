@@ -26,7 +26,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from .marketplace import inspect_package, MAX_PACKAGE
 from .models import WorkflowError, NAME_RE
-from .server_limits import BoundedHTTPServer
+from .server_limits import BoundedHTTPServer, unique_security_headers
 
 PUBLISHER = re.compile(r"[a-z][a-z0-9_-]{2,62}\Z")
 VERSION = re.compile(r"(0|[1-9][0-9]{0,4})\.(0|[1-9][0-9]{0,4})\.(0|[1-9][0-9]{0,4})\Z")
@@ -114,6 +114,13 @@ class Registry:
             raise WorkflowError("invalid or revoked publisher token")
         return row["name"]
 
+    @staticmethod
+    def _active_writer(db: sqlite3.Connection, name: str, token: str) -> None:
+        """Recheck authorization under the write lock, not just before it."""
+        if db.execute("SELECT 1 FROM publishers WHERE name=? AND token_hash=? AND revoked=0",
+                      (name, token_digest(token))).fetchone() is None:
+            raise WorkflowError("publisher token was revoked or rotated before the write")
+
     def rotate_token(self, name: str) -> str:
         token = secrets.token_urlsafe(32)
         with self.connect() as db:
@@ -182,6 +189,8 @@ class Registry:
     def yank(self, token: str, name: str, version: str) -> None:
         publisher=self.authenticate(token)
         with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self._active_writer(db, publisher, token)
             if not db.execute("UPDATE packages SET yanked=1 WHERE publisher=? AND name=? AND version=?",(publisher,name,version)).rowcount:
                 raise WorkflowError("package not found")
             self.audit(db,publisher,"yank",name+"@"+version)
@@ -191,7 +200,9 @@ class Registry:
         if reviewer==publisher or type(stars) is not int or not 1<=stars<=5:
             raise WorkflowError("invalid rating or self-review")
         with self.connect() as db:
-            if not db.execute("SELECT 1 FROM packages WHERE publisher=? AND name=? AND yanked=0",(publisher,name)).fetchone():
+            db.execute("BEGIN IMMEDIATE")
+            self._active_writer(db, reviewer, token)
+            if not db.execute("SELECT 1 FROM packages p JOIN publishers a ON a.name=p.publisher WHERE p.publisher=? AND p.name=? AND p.yanked=0 AND a.revoked=0",(publisher,name)).fetchone():
                 raise WorkflowError("package not found")
             db.execute("INSERT INTO ratings VALUES(?,?,?,?) ON CONFLICT(reviewer,publisher,name) DO UPDATE SET stars=excluded.stars",(reviewer,publisher,name,stars))
             self.audit(db,reviewer,"rate",publisher+"/"+name)
@@ -210,6 +221,8 @@ class RegistryHandler(BaseHTTPRequestHandler):
         self.end_headers();self.wfile.write(data)
 
     def trusted_origin(self) -> bool:
+        if not unique_security_headers(self.headers):
+            return False
         expected=self.server.public_origin
         parsed=urlsplit(expected)
         return self.headers.get("Host")==parsed.netloc and self.headers.get("Origin",expected)==expected

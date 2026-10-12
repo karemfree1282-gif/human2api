@@ -1,0 +1,87 @@
+{
+  "version": "0.4.1",
+  "date": "2026-10-12",
+  "baseCommit": "e323cda36c1ab95c8e653e5a624d0cefe4c31dfc",
+  "sourceDigest": "87dfd9a99d9c473068c07b60d33254edcdce53c528e5ef7103777b5a1c426931",
+  "releaseReady": false,
+  "testSuite": {
+    "tests": 183,
+    "passed": 179,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 4
+  },
+  "newRegressionTestsIncludedInSuite": 15,
+  "localTLS": {
+    "verified": true,
+    "certificateValidationDisabled": false,
+    "publicHostingVerified": false,
+    "operations": [
+      "signed publication",
+      "download",
+      "pinned-key install",
+      "upgrade",
+      "downgrade rejection",
+      "token rotation",
+      "unauthorized request rejection",
+      "version yanking",
+      "backup and restore"
+    ]
+  },
+  "syntheticLoad": {
+    "status": "passed",
+    "scope": "local synthetic service soak only",
+    "publicHostingVerified": false,
+    "requests": [
+      {
+        "service": "local-rest",
+        "requests": 1000,
+        "workers": 16,
+        "successful": 1000,
+        "errors": 0,
+        "durationSeconds": 0.922,
+        "requestsPerSecond": 1084.57,
+        "latencyP50Ms": 14.24,
+        "latencyP95Ms": 18.07
+      },
+      {
+        "service": "registry",
+        "requests": 1000,
+        "workers": 16,
+        "successful": 1000,
+        "errors": 0,
+        "durationSeconds": 0.863,
+        "requestsPerSecond": 1158.55,
+        "latencyP50Ms": 13.43,
+        "latencyP95Ms": 16.87
+      }
+    ],
+    "exclusiveDesktopLeaseVerified": true,
+    "cancelledRuns": 2,
+    "cancellationSeconds": 0.005,
+    "notes": "No browser URL navigation or physical-device acceptance is claimed."
+  },
+  "wheel": {
+    "built": true,
+    "isolatedInstallPassed": true,
+    "installedCLISmokePassed": true,
+    "sha256": "cec12ae13405ec0e452e7f0e4ea64338a861aa8930e7ae96b960a21f47c37043"
+  },
+  "remaining": {
+    "browserURLEndToEnd": "4 cases blocked by managed Chromium policy; no policy bypass used",
+    "nativeInstallers": "Build attempted; PyInstaller and native GUI dependencies missing",
+    "androidAPK": "Build attempted; Gradle and Android SDK not installed; no APK produced",
+    "deviceAcceptance": "Windows, macOS, Linux accessibility and physical Android sessions unverified",
+    "publicHosting": "No connected hosting account; verified TLS was loopback-only",
+    "securityReview": "Targeted regressions passed; no independent audit or production stress certification"
+  },
+  "reproduce": [
+    "python scripts/complete.py --repair --native --android --output evidence/full",
+    "python qa/soak.py --requests 1000 --workers 16 --output evidence/soak.json"
+  ],
+  "evidenceSHA256": {
+    "full/pytest.xml": "94944d5c1f08bc6278072c233792e6b5859b7d273917e34bb221e53028db7860",
+    "full/report.json": "603b4f35a645a3a0f1f5c3d4c3fe588de5f37d9acac4ffad0032dccba16b87bb",
+    "soak.json": "157ca05df126a60e44f0ca887727df9ef74c622fc27bdf5e0ef9f4a81c20f110"
+  }
+}

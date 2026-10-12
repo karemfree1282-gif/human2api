@@ -1,11 +1,21 @@
 """Bound concurrent HTTP connections before allocating handler threads."""
 from http.server import ThreadingHTTPServer
 import threading
+from email.message import Message
+
+
+def unique_security_headers(headers: Message) -> bool:
+    """Reject ambiguous identity/origin headers before selecting any value."""
+    if len(headers.get_all("Host", [])) != 1:
+        return False
+    return all(len(headers.get_all(name, [])) <= 1 for name in
+               ("Origin", "Authorization", "X-H2A-Token", "Content-Type"))
 
 
 class BoundedHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
+    request_queue_size = 64
 
     def __init__(self, *args, **kwargs):
         self.connection_slots = threading.BoundedSemaphore(32)
