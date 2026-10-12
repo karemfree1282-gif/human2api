@@ -237,7 +237,8 @@ def test_record_desktop_smart_selector_at_point(monkeypatch):
     ctrl = FakeControl("entry", "Text Box")
     ctrl.top_level_parent = lambda: app
     app.window_text = lambda: "Untitled - Notes"
-    monkeypatch.setattr(desktop_access, "_desktop", lambda: SimpleNamespace(from_point=lambda x,y:ctrl))
+    app._children = [ctrl]
+    monkeypatch.setattr(desktop_access, "_desktop", lambda: SimpleNamespace(from_point=lambda x,y:ctrl, windows=lambda **kwargs:[app]))
     assert desktop_access.selector_at_point(10,20) == {"action":"ui_click","windowTitle":"Untitled - Notes","automationId":"entry","controlType":"Edit"}
     ctrl.element_info.is_password=True
     assert desktop_access.selector_at_point(10,20) is None

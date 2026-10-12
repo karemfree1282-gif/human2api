@@ -20,6 +20,7 @@ from . import __version__
 from .models import NAME_RE, WorkflowError, input_json_schema, list_workflows, load_workflow, save_workflow, workflow_file, validate_inputs
 from .runner import run_workflow
 from .execution import RunCancelled
+from .server_limits import BoundedHTTPServer
 from .marketplace import local_catalog, remote_catalog
 from .history import RunJournal
 from .scheduler import LocalScheduler
@@ -44,16 +45,53 @@ def openapi_schema(directory: Path, port: int = 8765) -> dict[str, Any]:
         "post": {"operationId": "cancel_run", "summary": "Request cooperative cancellation of an active run",
                  "security": [{"LocalToken": []}], "parameters": [{"name": "runId", "in": "path", "required": True, "schema": {"type": "string"}}],
                  "responses": {"202": {"description": "Cancellation requested"}, "409": {"description": "Run already finished"}}}}
+    # Operational routes are documented alongside each typed workflow tool.
+    from .contracts import workflow_schema
+    for route, label in {
+        "/api/workflows":"List installed workflows", "/api/history":"Metadata-only run history",
+        "/api/schedules":"List enabled schedules", "/api/platforms":"Platform capability probes",
+        "/api/catalog":"List local packages", "/api/catalog/remote":"Query public JSON catalog",
+        "/api/recorder":"Recorder status", "/api/openapi.json":"This OpenAPI definition",
+    }.items():
+        paths[route] = {"get":{"summary":label,"security":[{"LocalToken":[]}],"responses":{"200":{"description":"JSON response"},"401":{"description":"Invalid token"}}}}
+    for route, label, parameter in (
+        ("/api/runs/{runId}","Live status or metadata-only history","runId"),
+        ("/api/editor/workflows/{name}","Workflow and current revision","name"),
+        ("/api/workflows/{name}","Inspect workflow","name"),
+    ):
+        paths[route] = {"get":{"summary":label,"security":[{"LocalToken":[]}],
+            "parameters":[{"name":parameter,"in":"path","required":True,"schema":{"type":"string"}}],
+            "responses":{"200":{"description":"Current JSON data"},"404":{"description":"Not found"}}}}
+    definition = workflow_schema()
+    definition.pop("$id", None)
+    def embed_references(value):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key == "$ref" and isinstance(child, str) and child.startswith("#/$defs/"):
+                    value[key] = "#/components/schemas/Workflow/$defs/" + child.removeprefix("#/$defs/")
+                else:
+                    embed_references(child)
+        elif isinstance(value, list):
+            for child in value:
+                embed_references(child)
+    embed_references(definition)
+    for route, label in (("/api/editor/validate","Validate only; never execute"),("/api/editor/save/{name}","Optimistic-concurrency save with revision backup")):
+        operation = {"summary":label,"security":[{"LocalToken":[]}],"requestBody":{"required":True,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/Workflow"}}}},
+            "responses":{"200":{"description":"Validation or new revision"},"400":{"description":"Invalid definition"},"409":{"description":"Conflicting edit"},"428":{"description":"Missing If-Match revision"}}}
+        if "{name}" in route:
+            operation["parameters"]=[{"name":"name","in":"path","required":True,"schema":{"type":"string"}},
+                {"name":"If-Match","in":"header","required":True,"schema":{"type":"string"},"description":"Revision from GET; use new to create"}]
+        paths[route]={"post":operation}
     return {
         "openapi": "3.1.0",
         "info": {"title": "Human2API local REST API", "version": __version__, "description": "Only listen on loopback. Send X-H2A-Token for all API operations. Write workflows require approve:true."},
         "servers": [{"url": f"http://127.0.0.1:{port}"}],
-        "components": {"securitySchemes": {"LocalToken": {"type": "apiKey", "in": "header", "name": "X-H2A-Token"}}},
+        "components": {"securitySchemes": {"LocalToken": {"type": "apiKey", "in": "header", "name": "X-H2A-Token"}}, "schemas": {"Workflow": definition}},
         "paths": paths,
     }
 
 
-class Human2APIServer(ThreadingHTTPServer):
+class Human2APIServer(BoundedHTTPServer):
     daemon_threads = True
     def __init__(self, address: tuple[str, int], workflows: Path, **kwargs: Any) -> None:
         self.workflows = workflows.resolve()
@@ -67,12 +105,21 @@ class Human2APIServer(ThreadingHTTPServer):
         self.lock = threading.Lock()
         super().__init__(address, RequestHandler, **kwargs)
 
+    def purge_results(self) -> None:
+        """Call while holding lock; the durable journal contains metadata only."""
+        completed = sorted(((k, v) for k, v in self.runs.items() if v.get("state") in {"completed", "failed", "cancelled"}), key=lambda x: x[1].get("finishedAt", 0), reverse=True)
+        keep = {key for key, _ in completed[:100]}
+        now = time.time()
+        for key, item in completed:
+            if key not in keep or now - item.get("finishedAt", 0) > 3600:
+                self.runs.pop(key, None)
+
 
 class RequestHandler(BaseHTTPRequestHandler):
     server: Human2APIServer
     def log_message(self, fmt: str, *args: Any) -> None:
         # No POST payloads, credentials, or workflow inputs are logged.
-        sys.stderr.write("h2a-http: " + (fmt % args) + "\n")
+        return  # Request URLs can contain private identifiers; do not log them.
 
     def _json(self, code: int, value: Any) -> None:
         data = json.dumps(value, ensure_ascii=False).encode("utf-8")
@@ -86,7 +133,7 @@ class RequestHandler(BaseHTTPRequestHandler):
 
     def _asset(self, name: str, content_type: str) -> None:
         data = files("human2api").joinpath("static", name).read_bytes()
-        if name == "dashboard.html":
+        if name in {"dashboard.html", "editor.html"}:
             data = data.replace(b"__H2A_LOCAL_TOKEN__", self.server.token.encode("ascii"))
         self.send_response(200)
         self.send_header("Content-Type", content_type)
@@ -107,9 +154,12 @@ class RequestHandler(BaseHTTPRequestHandler):
         return origin is None or origin in {f"http://127.0.0.1:{port}", f"http://localhost:{port}"}
 
     def _auth_ok(self) -> bool:
-        return secrets.compare_digest(self.headers.get("X-H2A-Token", ""), self.server.token)
+        return secrets.compare_digest(self.headers.get("X-H2A-Token", "").encode("utf-8"), self.server.token.encode("utf-8"))
 
     def _read_body(self) -> dict[str, Any]:
+        if self.headers.get("Transfer-Encoding") or len(self.headers.get_all("Content-Length", [])) != 1:
+            raise WorkflowError("one Content-Length and no Transfer-Encoding are required")
+        self.connection.settimeout(15)
         length = int(self.headers.get("Content-Length", "0"))
         if length <= 0 or length > MAX_POST_SIZE:
             raise WorkflowError("request body must be a nonempty JSON document below 256 KiB")
@@ -124,6 +174,12 @@ class RequestHandler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         if path == "/":
             return self._asset("dashboard.html", "text/html; charset=utf-8")
+        if path == "/editor":
+            return self._asset("editor.html", "text/html; charset=utf-8")
+        if path == "/editor.js":
+            return self._asset("editor.js", "application/javascript; charset=utf-8")
+        if path == "/editor.css":
+            return self._asset("editor.css", "text/css; charset=utf-8")
         if path == "/app.css":
             return self._asset("app.css", "text/css; charset=utf-8")
         if path == "/app.js":
@@ -139,10 +195,16 @@ class RequestHandler(BaseHTTPRequestHandler):
         if not path.startswith("/api/") or not self._auth_ok():
             return self._json(401, {"error": "invalid API token"})
         try:
+            if path.startswith("/api/editor/workflows/"):
+                from .editor import revision
+                name = unquote(path.removeprefix("/api/editor/workflows/"))
+                p = workflow_file(self.server.workflows, name)
+                with self.server.lock:
+                    return self._json(200, {"workflow": load_workflow(p), "revision": revision(p)})
             if path == "/api/platforms":
                 import importlib.util
                 import shutil
-                return self._json(200, {"browser": {"available": True}, "desktop": {"dependencyAvailable": importlib.util.find_spec("pyautogui") is not None}, "android": {"adbInstalled": shutil.which("adb") is not None}, "windowsUIA": {"supportedOnWindows": True, "requiresExtra": "accessibility"}, "aiHealing": {"optInOnly": True}})
+                return self._json(200, {"browser": {"available": True}, "desktop": {"dependencyAvailable": importlib.util.find_spec("pyautogui") is not None}, "android": {"adbInstalled": shutil.which("adb") is not None}, "nativeAccessibility": {"windows": "UIA", "macos": "AX", "linux": "AT-SPI", "requiresPermission": True}, "windowsUIA": {"supportedOnWindows": True, "requiresExtra": "accessibility"}, "aiHealing": {"optInOnly": True}})
             if path == "/api/catalog":
                 return self._json(200, {"packages": local_catalog(self.server.workflows.parent / "catalog")})
             if path == "/api/catalog/remote":
@@ -161,6 +223,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             if path.startswith("/api/runs/"):
                 run_id = path.removeprefix("/api/runs/")
                 with self.server.lock:
+                    self.server.purge_results()
                     status = self.server.runs.get(run_id)
                 if status is None:
                     # After a server restart, only non-sensitive run metadata remains.
@@ -184,6 +247,21 @@ class RequestHandler(BaseHTTPRequestHandler):
         try:
             body = self._read_body()
             path = urlsplit(self.path).path
+            if path == "/api/editor/validate":
+                from .editor import inspect_definition
+                return self._json(200, inspect_definition(body))
+            if path.startswith("/api/editor/save/"):
+                from .editor import save_revision, EditConflict
+                expected = self.headers.get("If-Match")
+                if expected is None:
+                    return self._json(428, {"error": "If-Match revision is required"})
+                name = unquote(path.removeprefix("/api/editor/save/"))
+                try:
+                    with self.server.lock:
+                        rev = save_revision(self.server.workflows, name, body, expected)
+                    return self._json(200, {"saved": True, "revision": rev})
+                except EditConflict as exc:
+                    return self._json(409, {"error": str(exc)})
             if path == "/api/schedules/add":
                 name = body.get("name")
                 minutes = body.get("everyMinutes")
@@ -261,8 +339,9 @@ class RequestHandler(BaseHTTPRequestHandler):
                         pass
                     with self.server.lock:
                         previous = self.server.runs.get(run_id, {})
-                        self.server.runs[run_id] = {**status, "lastStep": previous.get("lastStep"), "workflow": name}
+                        self.server.runs[run_id] = {**status, "lastStep": previous.get("lastStep"), "workflow": name, "createdAt": started_at, "finishedAt": int(time.time())}
                         self.server.cancellations.pop(run_id, None)
+                        self.server.purge_results()
                 threading.Thread(target=task, daemon=True).start()
                 return self._json(202, {"runId": run_id, "state": "running"})
             if path.startswith("/api/save/"):
@@ -284,7 +363,8 @@ class RequestHandler(BaseHTTPRequestHandler):
                     raise WorkflowError("workflow name already exists; choose a new name")
                 if self.server.recorder and self.server.recorder.poll() is None:
                     raise WorkflowError("recorder already running")
-                cmd = [sys.executable, "-m", "human2api", "record", url, "--name", name, "--directory", str(self.server.workflows)]
+                launcher = [sys.executable, "--h2a-cli"] if getattr(sys, "frozen", False) else [sys.executable, "-m", "human2api"]
+                cmd = launcher + ["record", url, "--name", name, "--directory", str(self.server.workflows)]
                 self.server.recorder = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 return self._json(202, {"started": True, "message": "Use Stop & save in the new Chromium window"})
             return self._json(404, {"error": "not found"})

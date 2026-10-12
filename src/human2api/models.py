@@ -20,13 +20,13 @@ SERIAL_RE = re.compile(r"^[A-Za-z0-9._:-]{1,100}$")
 PACKAGE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+$")
 BROWSER_ACTIONS = frozenset({"click", "fill", "select", "check", "wait", "assert_text", "extract_text", "download", "screenshot", "navigate", "press", "hover", "scroll", "drag", "wait_ms", "switch_tab"})
 DESKTOP_ACTIONS = frozenset({"click", "double_click", "move", "scroll", "type_text", "hotkey", "press", "wait_ms", "screenshot", "assert_image", "ui_click", "ui_fill", "ui_assert_text", "ui_extract_text"})
-ANDROID_ACTIONS = frozenset({"tap", "tap_text", "swipe", "input_text", "keyevent", "wait_ms", "assert_text", "extract_text", "screenshot"})
+ANDROID_ACTIONS = frozenset({"scroll_node", "set_text", "tap", "tap_text", "swipe", "input_text", "keyevent", "wait_ms", "assert_text", "extract_text", "screenshot"})
 ACTIONS = BROWSER_ACTIONS | DESKTOP_ACTIONS | ANDROID_ACTIONS
 TARGET_ACTIONS = {"browser": BROWSER_ACTIONS, "desktop": DESKTOP_ACTIONS, "android": ANDROID_ACTIONS}
 INPUT_TYPES = frozenset({"string", "number", "boolean"})
 MAX_STEPS = 250
 MAX_WORKFLOW_BYTES = 256 * 1024
-WRITE_ACTIONS = frozenset({"ui_click", "ui_fill", "click", "fill", "select", "check", "download", "press", "drag", "double_click", "move", "scroll", "type_text", "hotkey", "tap", "tap_text", "swipe", "input_text", "keyevent"})
+WRITE_ACTIONS = frozenset({"scroll_node", "set_text", "ui_click", "ui_fill", "click", "fill", "select", "check", "download", "press", "drag", "double_click", "move", "scroll", "type_text", "hotkey", "tap", "tap_text", "swipe", "input_text", "keyevent"})
 
 
 class WorkflowError(ValueError):
@@ -52,8 +52,8 @@ def _safe_filename(name: Any) -> str:
 
 
 def _validate_value(key: str, value: Any, field_type: str) -> None:
-    if field_type == "string" and not isinstance(value, str):
-        raise WorkflowError(f"input {key}: must be a string")
+    if field_type == "string" and (not isinstance(value, str) or len(value) > 10000):
+        raise WorkflowError(f"input {key}: must be a string of at most 10000 characters")
     if field_type == "number" and (type(value) not in (int, float) or isinstance(value, bool) or (not math.isfinite(value) or abs(value) > 1e15)):
         raise WorkflowError(f"input {key}: must be a finite number")
     if field_type == "boolean" and not isinstance(value, bool):
@@ -77,7 +77,7 @@ def validate_workflow(raw: Any) -> dict[str, Any]:
     target = raw.get("target", "browser")
     if target not in TARGET_ACTIONS:
         raise WorkflowError("target must be browser, desktop or android")
-    top_fields = {"$schema", "schemaVersion", "name", "description", "target", "startUrl", "permissions", "allowedHosts", "inputs", "steps", "deviceSerial", "appPackage"}
+    top_fields = {"$schema", "schemaVersion", "name", "description", "target", "startUrl", "permissions", "allowedHosts", "inputs", "steps", "deviceSerial", "appPackage", "networkPolicy", "allowSensitiveArtifacts"}
     unknown_top = set(raw) - top_fields
     if unknown_top:
         raise WorkflowError("unknown workflow fields: " + ", ".join(sorted(unknown_top)))
@@ -106,6 +106,10 @@ def validate_workflow(raw: Any) -> dict[str, Any]:
                     raise WorkflowError(f"{field} is invalid")
         elif "deviceSerial" in raw or "appPackage" in raw:
             raise WorkflowError("deviceSerial and appPackage require target android")
+    if "networkPolicy" in raw and (target != "browser" or raw["networkPolicy"] not in {"navigation", "strict"}):
+        raise WorkflowError("networkPolicy requires browser and must be navigation or strict")
+    if "allowSensitiveArtifacts" in raw and type(raw["allowSensitiveArtifacts"]) is not bool:
+        raise WorkflowError("allowSensitiveArtifacts must be boolean")
     permission = raw.get("permissions", "write")
     if permission not in {"read", "write"}:
         raise WorkflowError("permissions must be 'read' or 'write'")
@@ -139,9 +143,15 @@ def validate_workflow(raw: Any) -> dict[str, Any]:
         browser_with_selector = {"click", "fill", "select", "check", "wait", "assert_text", "extract_text", "download", "press", "hover", "scroll", "drag"}
         if target == "browser" and action in browser_with_selector:
             _check_string(step.get("selector"), f"step {index} selector")
+        if "frames" in step:
+            frames = step["frames"]
+            if "frame" in step or not isinstance(frames, list) or not 1 <= len(frames) <= 10:
+                raise WorkflowError("frames requires 1-10 selectors and cannot be combined with frame")
+            for frame in frames:
+                _check_string(frame, "iframe selector")
         if target == "browser" and action == "navigate":
             _check_string(step.get("url"), f"step {index} url")
-        if action in {"fill", "select", "type_text", "input_text"}:
+        if action in {"fill", "select", "type_text", "input_text", "set_text"}:
             value = step.get("value")
             if not isinstance(value, str) or len(value) > 10000:
                 raise WorkflowError(f"step {index} value must be a string of at most 10000 characters")
@@ -188,40 +198,26 @@ def validate_workflow(raw: Any) -> dict[str, Any]:
             if action == "swipe":
                 for dim in ("x2", "y2"):
                     _int_between(step.get(dim), f"step {index} {dim}", 0, 16384)
-            if action in {"tap_text", "extract_text"}:
+            if action in {"tap_text", "extract_text", "set_text", "scroll_node"}:
                 _check_string(step.get("selector"), f"step {index} selector", max_length=300)
-        common = {"action", "timeoutMs", "retries", "retryDelayMs"}
-        extras = {
-            "click": {"selector", "alternatives", "x", "y", "role", "label", "textHint"},
-            "double_click": {"x", "y"}, "move": {"x", "y"},
-            "fill": {"selector", "alternatives", "value", "role", "label", "textHint"},
-            "select": {"selector", "alternatives", "value", "role", "label", "textHint"},
-            "check": {"selector", "alternatives", "checked", "role", "label", "textHint"},
-            "wait": {"selector", "alternatives", "role", "label", "textHint"},
-            "assert_text": {"selector", "alternatives", "text", "role", "label", "textHint"},
-            "extract_text": {"selector", "alternatives", "as", "role", "label", "textHint"},
-            "download": {"selector", "alternatives", "filename", "role", "label", "textHint"},
-            "screenshot": {"filename"}, "navigate": {"url"},
-            "press": {"selector", "alternatives", "key", "role", "label", "textHint"},
-            "hover": {"selector", "alternatives", "role", "label", "textHint"},
-            "scroll": {"selector", "alternatives", "delta"},
-            "drag": {"selector", "alternatives", "targetSelector", "role", "label", "textHint"},
-            "wait_ms": {"durationMs"}, "switch_tab": {"index"},
-            "type_text": {"value"}, "hotkey": {"keys"},
-            "assert_image": {"image"},
-            "ui_click": {"windowTitle", "automationId", "name", "controlType"},
-            "ui_fill": {"windowTitle", "automationId", "name", "controlType", "value"},
-            "ui_assert_text": {"windowTitle", "automationId", "name", "controlType", "text"},
-            "ui_extract_text": {"windowTitle", "automationId", "name", "controlType", "as"},
-            "tap": {"x", "y"}, "tap_text": {"selector", "by"},
-            "swipe": {"x", "y", "x2", "y2", "durationMs"},
-            "input_text": {"value"}, "keyevent": {"key"},
-        }
-        if target == "browser" and action in browser_with_selector:
-            extras[action].add("frame")
-        unknown = set(step) - common - extras[action]
+        if action == "set_text" and not raw.get("appPackage"):
+            raise WorkflowError("Android set_text requires appPackage for explicit companion scope")
+        from .contracts import action_contract
+        allowed, required = action_contract(target, action)
+        if required - set(step):
+            raise WorkflowError(f"step {index}: missing required fields {', '.join(sorted(required-set(step)))}")
+        unknown = set(step) - allowed
         if unknown:
+            if "retries" in unknown:
+                raise WorkflowError(f"step {index}: retries are permitted only for read-only assertions and extraction")
             raise WorkflowError(f"step {index}: unknown fields {', '.join(sorted(unknown))}")
+        if action in {"set_text", "scroll_node"}:
+            if not raw.get("appPackage"):
+                raise WorkflowError("Android companion actions require appPackage")
+            if step.get("by", "resource-id") not in {"resource-id", "content-desc"}:
+                raise WorkflowError("companion selectors require resource-id or content-desc")
+        if action == "scroll_node" and step.get("direction") not in {"forward", "backward"}:
+            raise WorkflowError("scroll_node direction must be forward or backward")
         if "alternatives" in step and (not isinstance(step["alternatives"], list) or len(step["alternatives"]) > 8 or not all(isinstance(s, str) and 0 < len(s) < 2048 for s in step["alternatives"])):
             raise WorkflowError(f"step {index}: alternatives must be a small array of selectors")
         if "retries" in step:
@@ -319,9 +315,18 @@ def save_workflow(path: Path | str, workflow: dict[str, Any]) -> Path:
     payload = json.dumps(workflow, indent=2, ensure_ascii=False) + "\n"
     if len(payload.encode("utf-8")) > MAX_WORKFLOW_BYTES:
         raise WorkflowError("workflow JSON exceeds size limit")
-    temp = path.with_name(path.name + ".tmp")
-    temp.write_text(payload, encoding="utf-8")
-    temp.replace(path)
+    import os
+    import tempfile
+    fd, temp_name = tempfile.mkstemp(prefix=".h2a-", suffix=".tmp", dir=path.parent)
+    temp = Path(temp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temp.replace(path)
+    finally:
+        temp.unlink(missing_ok=True)
     return path
 
 

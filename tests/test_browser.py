@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 from urllib.request import urlopen
 
@@ -20,7 +21,7 @@ def require_browser_network(local_server, chromium_path):
             try:
                 page.goto(url + "/demo", timeout=3000)
             except Exception as exc:
-                if "ERR_BLOCKED_BY_ADMINISTRATOR" in str(exc):
+                if "ERR_BLOCKED_BY_ADMINISTRATOR" in str(exc) and os.environ.get("GITHUB_ACTIONS") != "true":
                     pytest.skip("local Chromium managed policy blocks all URLs; full end-to-end tests run in GitHub Actions")
                 raise
         finally:

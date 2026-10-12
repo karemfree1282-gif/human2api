@@ -30,7 +30,7 @@ def _gui() -> Any:
     return pyautogui
 
 
-def execute_desktop(workflow: dict[str, Any], values: dict[str, Any], artifacts: Path, on_step: Callable | None = None, *, cancel_event: Any = None) -> dict[str, Any]:
+def execute_desktop(workflow: dict[str, Any], values: dict[str, Any], artifacts: Path, on_step: Callable | None = None, *, cancel_event: Any = None, heal: bool = False, ai: bool = False) -> dict[str, Any]:
     gui = _gui() if any(step["action"] not in {"ui_click", "ui_fill", "ui_assert_text", "ui_extract_text", "wait_ms"} for step in workflow["steps"]) else None
     outputs: dict[str, Any] = {}
     for i, step in enumerate(workflow["steps"], 1):
@@ -73,7 +73,7 @@ def execute_desktop(workflow: dict[str, Any], values: dict[str, Any], artifacts:
                 outputs.setdefault("artifacts", []).append(str(result))
             elif act in {"ui_click", "ui_fill", "ui_assert_text", "ui_extract_text"}:
                 from .desktop_access import execute_ui_step
-                result = run_step_with_retry(step, lambda: execute_ui_step(step, values), cancel_event=cancel_event)
+                result = run_step_with_retry(step, lambda: execute_ui_step(step, values, **({"heal": heal, "ai": ai, "audit": outputs.setdefault("healing", [])} if heal else {})), cancel_event=cancel_event)
                 if act == "ui_extract_text":
                     outputs[step["as"]] = result
             elif act == "assert_image":
@@ -86,7 +86,12 @@ def execute_desktop(workflow: dict[str, Any], values: dict[str, Any], artifacts:
                 if not reference.is_file() or reference.is_symlink():
                     raise WorkflowError("reference image not found under assets/")
                 try:
-                    match = run_step_with_retry(step, lambda: gui.locateOnScreen(str(reference), confidence=0.90), cancel_event=cancel_event)
+                    def assert_visible():
+                        found = gui.locateOnScreen(str(reference), confidence=0.90)
+                        if found is None:
+                            raise WorkflowError("reference image not visible on screen")
+                        return found
+                    match = run_step_with_retry(step, assert_visible, cancel_event=cancel_event)
                 except (OSError, ValueError) as exc:
                     raise WorkflowError("image recognition unavailable; install opencv-python") from exc
                 if match is None:
@@ -123,6 +128,7 @@ def record_desktop(name: str, output_dir: Path, *, description: str = "Guided de
     from .models import save_workflow, workflow_file
     stop = Event()
     steps: list[dict[str, Any]] = []
+    inputs: dict[str, Any] = {}
     def click(x: float, y: float, button: Any, pressed: bool) -> None:
         if pressed and str(button).endswith("left") and not stop.is_set() and len(steps) < 250:
             result = None
@@ -130,6 +136,10 @@ def record_desktop(name: str, output_dir: Path, *, description: str = "Guided de
                 from .desktop_access import selector_at_point
                 result = selector_at_point(int(x), int(y))
             steps.append(result or {"action": "click", "x": int(x), "y": int(y)})
+            if result and result.get("controlType", "").lower() in {"edit", "entry", "text", "axtextfield", "axtextarea"} and len(steps) < 250:
+                variable = "input_" + str(len(inputs) + 1)
+                inputs[variable] = {"type": "string", "required": True, "secret": True}
+                steps.append({**result, "action": "ui_fill", "value": "{{" + variable + "}}"})
     def scroll(x: float, y: float, dx: float, dy: float) -> None:
         if not stop.is_set() and len(steps) < 250 and dy:
             steps.append({"action": "scroll", "delta": int(max(-100, min(100, dy)))})
@@ -140,7 +150,7 @@ def record_desktop(name: str, output_dir: Path, *, description: str = "Guided de
         return None
     print("DESKTOP RECORDING: mouse clicks and scrolling only. Press F12 to stop.")
     if smart:
-        print("Windows UIA smart capture enabled. Stable non-password automation IDs replace coordinates when available.")
+        print("Native smart capture: unique non-password controls replace coordinates. Clicking an editable control adds a secret input placeholder, never its value. Review unused placeholders before running.")
     print("NO keyboard text/passwords are captured. Review coordinates before sharing.")
     with mouse.Listener(on_click=click, on_scroll=scroll) as mouse_listener, keyboard.Listener(on_press=key_press):
         stop.wait()
@@ -150,4 +160,4 @@ def record_desktop(name: str, output_dir: Path, *, description: str = "Guided de
     path = workflow_file(output_dir, name)
     if path.exists():
         raise WorkflowError("workflow already exists")
-    return save_workflow(path, {"schemaVersion": 1, "name": name, "description": description, "target": "desktop", "permissions": "write", "inputs": {}, "steps": steps})
+    return save_workflow(path, {"schemaVersion": 1, "name": name, "description": description, "target": "desktop", "permissions": "write", "inputs": inputs, "steps": steps})

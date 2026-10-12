@@ -1,38 +1,23 @@
-# Release status and roadmap
+# Capability and verification status - v0.4.0
 
-As of v0.3, this is an **open-source developer preview**. Features below are not claimed as complete until actually tested.
+This release adds implementation, integration tests and release tooling, not universal-app or hardware certification.
 
-## Implemented and unit-tested
+| Area | Implemented | Evidence still required |
+| --- | --- | --- |
+| Browser | Recording, unique selectors, parameterized input, nested stable frames, tabs, strict-host option, assertions and recovery | Four URL E2E tests outside managed-browser restrictions; representative authenticated sites |
+| Desktop | UIA / macOS AX / Linux AT-SPI, smart pointer capture, Unicode native text and scoped recovery | Real recording/replay and display/permission cases on each OS |
+| Android | Consent-scoped AccessibilityService companion, STOP notification, native selectors, Unicode input and ADB bridge | SDK build/lint and actual phones; opaque UI remains outside guaranteed support |
+| Interfaces | CLI, local REST, modern/legacy MCP, visual editor and optional native Studio | Native installers and actual MCP approval UX |
+| Safety | Vault, private metadata/artifacts, redaction, CAS editing, device leases, bounded cancellation/retries | Independent review, real OS interruption tests and deployment hardening |
+| Sharing | Version-bound signatures, pinned-key upgrades, publisher accounts, reviews, revocation and backup/restore | Operator enrollment and real HTTPS service acceptance |
+| Release | One-command checks, isolated wheel smoke, native/Android builds and draft-only releases | Billing unlock, green required hosted workflows and OS signing |
 
-- Backward-compatible inspectable workflow JSON
-- Browser recorder: DOM clicks, form fields, checkbox/select; cross-tab and first-level iframe support (stable iframe ID/name)
-- Browser runner: Playwright, screenshots, downloads, tab switching, explicit host allowlist, fallback selectors, assertions
-- Desktop runner: mouse and keyboard actions, screen capture and optional OpenCV image assertion; optional mouse-only desktop recorder
-- Android runner: ADB tap/swipe/text/key events, UIAutomator text selectors, screenshot; interactive Android teaching wizard
-- CLI, ephemeral-auth loopback REST API and typed MCP tools for all targets
-- Optional local semantic selector healing; explicitly approved AI selector advice via compatible model endpoint
-- Package packing, checksum verification, optional Ed25519 signing with pinned public keys, manual approval installation and local/public JSON catalog
-- Self-contained fake invoice demo and CI test suite with mocked device backends
-- Native Windows UIA named/automation-ID selectors for click/fill/assert/extract; Unicode text through ValuePattern
-- Cooperative per-run cancellation, live step status, bounded local concurrency and private metadata history
-- Bounded retries for read-only UI checks (never duplicate mutations)
-- Opt-in local recurring job scheduler using permission-checked input files (worker runs in foreground)
+## Priorities
 
-## Integration validation still needed
+Resolve the billing lock and obtain real runner execution. Run platform acceptance and compile distributions with the supplied scripts. Deploy the independent registry to an authorized host and validate HTTPS/recovery. Expand compatibility using reproducible reports and synthetic examples.
 
-- Real-world Windows/macOS/Linux UX recording and replay; Windows UIA integration requires real hardware validation; macOS/Linux native accessibility selectors still not implemented
-- Real Android phones across OEM versions; Unicode text, complex app UI, dialogs, multiple display modes
-- Browser multi-tab and iframe scenarios with various modern sites and authenticated flows
-- End-to-end operator-tested cancellation for long-running native UI/ADB calls; current cancellation is cooperative
-- Test/enable GitHub Pages deployment after GitHub Actions settings and runner availability are confirmed
-- Real-user permission prompts in MCP clients
+## Deliberate boundaries
 
-## Later major initiatives
+No silent keylogging, credential collection, arbitrary shell steps, automatic approval, fake reviews or safety claims from signatures. Pointer capture does not infer every human intention. Protected apps, opaque canvases, security dialogs and inaccessible controls may require another approved integration.
 
-- Native accessibility tree-based desktop recorder rather than only pointer replay
-- Android companion AccessibilityService for consent-based native event capture (no unrequested keylogging)
-- Offline computer vision fallback with local models for desktop/mobile
-- Hosted identity-verified publisher accounts and trusted online marketplace (cryptographic package signatures and public index exist, but no hosted accounts)
-- Cloud sync, team RBAC, scheduling, audit events and encrypted credentials
-
-We do not claim 'automate any app flawlessly'. That is an aspiration requiring much more hardware validation and engineering.
+Enterprise SSO, team billing and multi-tenant execution are separate initiatives, not hidden dependencies of the local tool. See [acceptance](ACCEPTANCE.md), [platforms](PLATFORMS.md) and [security](../SECURITY.md).

@@ -16,7 +16,10 @@ ROOT=Path(__file__).resolve().parents[1]
 
 
 def test_release_metadata_stays_in_sync():
-    import tomllib
+    try:
+        import tomllib
+    except ImportError:
+        import tomli as tomllib
     package=tomllib.loads((ROOT/"pyproject.toml").read_text())
     assert package["project"]["version"] == __version__
     assert __version__ in (ROOT/"CHANGELOG.md").read_text()

@@ -33,13 +33,13 @@ def create_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("record-desktop", help="Record only desktop mouse clicks/scrolls (F12 to stop); NEVER records typed text")
     p.add_argument("--name", required=True)
     p.add_argument("--directory", type=Path, default=Path("workflows"))
-    # Windows-only UIA smart capture enriches clicks, never captures typed content.
-    sub.choices["record-desktop"].add_argument("--smart", action="store_true", help="On Windows, prefer stable UIA automation IDs for clicks")
+    # Native accessibility enriches clicks and editable placeholders without typed content.
+    sub.choices["record-desktop"].add_argument("--smart", action="store_true", help="Prefer stable native accessibility selectors for clicks")
     p = sub.add_parser("record-android", help="Interactively teach an authorized Android device with ADB")
     p.add_argument("--name", required=True)
     p.add_argument("--serial", help="Explicit authorized Android device ID")
     p.add_argument("--directory", type=Path, default=Path("workflows"))
-    p = sub.add_parser("inspect-desktop", help="List non-secret accessibility selectors in a Windows UIA window")
+    p = sub.add_parser("inspect-desktop", help="List non-secret native accessibility selectors in an approved window")
     p.add_argument("--window", required=True, help="Exact title of the permitted window")
     p.add_argument("--limit", type=int, default=60)
     p.add_argument("--directory", type=Path, default=Path("workflows"))
@@ -54,6 +54,7 @@ def create_parser() -> argparse.ArgumentParser:
     p.add_argument("--output", required=True, type=Path)
     p.add_argument("--publisher", default="community")
     p.add_argument("--sign-key", type=Path, help="Ed25519 private key; creates a signed v2 package")
+    p.add_argument("--release-version", help="Signed major.minor.patch version required for registry publishing")
     p.add_argument("--directory", type=Path, default=Path("workflows"))
     p = sub.add_parser("verify", help="Verify a local .h2a.zip package before installation")
     p.add_argument("package", type=Path)
@@ -110,6 +111,37 @@ def create_parser() -> argparse.ArgumentParser:
         if cmd == "openapi":
             p.add_argument("--port", type=int, default=8765)
             p.add_argument("--output", type=Path, help="Write the OpenAPI 3.1 document to disk")
+    p = sub.add_parser("init", help="Create packaged example workflows without overwriting files")
+    p.add_argument("--directory", type=Path, default=Path("workflows"))
+    p = sub.add_parser("studio", help="Open the native desktop studio (optional pywebview)")
+    p.add_argument("--directory", type=Path, default=Path("workflows"))
+    p = sub.add_parser("vault", help="Manage a password-encrypted local secret vault")
+    p.add_argument("action", choices=["init", "set", "delete", "list"])
+    p.add_argument("name", nargs="?")
+    p.add_argument("--file", type=Path, default=Path(".h2a/secrets.vault"))
+    p.add_argument("--directory", type=Path, default=Path("workflows"))
+    p = sub.add_parser("batch", help="Run validated CSV/JSON/JSONL rows sequentially; stop on error")
+    p.add_argument("name")
+    p.add_argument("--file", type=Path, required=True)
+    p.add_argument("--approve", action="store_true")
+    p.add_argument("--directory", type=Path, default=Path("workflows"))
+    sub.choices["run"].add_argument("--vault", type=Path, help="Encrypted secret vault path")
+    sub.choices["run"].add_argument("--secret", action="append", default=[], metavar="INPUT=ENTRY", help="Resolve a declared secret input from the unlocked vault")
+    p = sub.add_parser("registry", help="Run or administer the signed package registry")
+    p.add_argument("registry_args", nargs=argparse.REMAINDER)
+    p.add_argument("--directory", type=Path, default=Path("workflows"))
+    p = sub.add_parser("registry-install", help="Install a signed package or perform a provenance-checked upgrade")
+    p.add_argument("publisher")
+    p.add_argument("name")
+    p.add_argument("version")
+    p.add_argument("--origin", required=True)
+    p.add_argument("--trust-key", type=Path, required=True)
+    p.add_argument("--approve", action="store_true")
+    p.add_argument("--upgrade", action="store_true")
+    p.add_argument("--directory", type=Path, default=Path("workflows"))
+    p = sub.add_parser("complete", help="Repair generated files, test, build, and report release gates")
+    p.add_argument("completion_args", nargs=argparse.REMAINDER)
+    p.add_argument("--directory", type=Path, default=Path("workflows"))
     return parser
 
 
@@ -120,10 +152,52 @@ def _path(directory: Path, name: str) -> Path:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "complete":
+        from .completion import main as complete_main
+        return complete_main(argv[1:])
     args = create_parser().parse_args(argv)
     try:
         directory = args.directory
-        if args.command in {"schedule", "scheduler"}:
+        if args.command == "registry":
+            from .registry import main as registry_main
+            return registry_main(args.registry_args)
+        elif args.command == "registry-install":
+            from .registry_client import install
+            print("Installed:", install(args.origin, args.publisher, args.name, args.version, directory,
+                                        args.trust_key, approve=args.approve, upgrade=args.upgrade))
+        elif args.command == "init":
+            from .workspace import initialize
+            print(json.dumps({"created": initialize(directory)}))
+        elif args.command == "studio":
+            from .studio import start
+            start(directory)
+        elif args.command == "vault":
+            from getpass import getpass
+            from .vault import Vault
+            password = getpass("Vault passphrase (at least 12 characters): ")
+            if args.action == "init" and password != getpass("Confirm passphrase: "):
+                raise WorkflowError("passphrases differ")
+            with Vault(args.file, password, create=args.action == "init") as vault:
+                if args.action == "list":
+                    print(json.dumps(vault.names()))
+                elif args.action in {"set", "delete"}:
+                    if not args.name:
+                        raise WorkflowError("vault entry name is required")
+                    if args.action == "set":
+                        vault.set(args.name, getpass("Secret value (not echoed): "))
+                    else:
+                        vault.delete(args.name)
+                    print("Vault updated")
+                else:
+                    print("Encrypted vault created")
+        elif args.command == "batch":
+            from .batch import read_rows, run_batch
+            wf = load_workflow(_path(directory, args.name))
+            result = run_batch(wf, read_rows(args.file, wf), approve=args.approve, artifacts_dir=directory.parent / "runs")
+            print(json.dumps(result, indent=2))
+            return 0 if result["ok"] else 1
+        elif args.command in {"schedule", "scheduler"}:
             from .scheduler import LocalScheduler
             store = LocalScheduler(directory)
             if args.command == "scheduler":
@@ -155,7 +229,7 @@ def main(argv: list[str] | None = None) -> int:
             from .android import adb_devices
             print(json.dumps({"authorizedDevices": adb_devices()}, indent=2))
         elif args.command == "pack":
-            print("Packed:", pack_workflow(_path(directory, args.name), args.output, publisher=args.publisher, sign_key=args.sign_key))
+            print("Packed:", pack_workflow(_path(directory, args.name), args.output, publisher=args.publisher, sign_key=args.sign_key, release_version=args.release_version))
         elif args.command == "verify":
             manifest, _ = inspect_package(args.package, trust_key=args.trust_key)
             print(json.dumps({"integrityValid": True, "signatureValid": manifest["packageVersion"] == 2, "publisherTrusted": args.trust_key is not None, "manifest": manifest}, indent=2))
@@ -190,6 +264,19 @@ def main(argv: list[str] | None = None) -> int:
             raw = args.data_file.read_text(encoding="utf-8") if args.data_file else args.data
             inputs = json.loads(raw)
             wf = load_workflow(_path(directory, args.name))
+            if args.secret:
+                if not args.vault:
+                    raise WorkflowError("--secret requires --vault")
+                from getpass import getpass
+                from .vault import Vault
+                with Vault(args.vault, getpass("Vault passphrase: ")) as vault:
+                    for mapping in args.secret:
+                        key, sep, entry = mapping.partition("=")
+                        if not sep or not wf.get("inputs", {}).get(key, {}).get("secret"):
+                            raise WorkflowError("--secret must reference a declared secret input as INPUT=ENTRY")
+                        if key in inputs:
+                            raise WorkflowError("input already supplied; refusing ambiguous secret mapping")
+                        inputs[key] = vault.get(entry)
             print(json.dumps(run_workflow(wf, inputs, approve_writes=args.approve, headless=not args.show_browser, browser_path=args.browser_path, heal_selectors=args.heal_selectors or args.ai_heal, ai_heal=args.ai_heal), indent=2))
         elif args.command == "mcp":
             serve_mcp(directory)
@@ -204,6 +291,9 @@ def main(argv: list[str] | None = None) -> int:
             if not 0 <= args.port <= 65535:
                 raise WorkflowError("port must be between 0 and 65535")
             server = make_server(directory, port=args.port)
+            if not any(directory.glob("*.json")):
+                from .workspace import initialize
+                initialize(directory, port=server.server_address[1])
             url = f"http://127.0.0.1:{server.server_address[1]}"
             print(f"Human2API dashboard: {url}")
             print("REST API token is intentionally ephemeral and embedded in the local dashboard.")

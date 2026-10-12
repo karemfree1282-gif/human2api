@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import tempfile
 import zipfile
 from pathlib import Path
@@ -28,7 +29,7 @@ def _canonical(value: Any) -> bytes:
     return (json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False) + "\n").encode("utf-8")
 
 
-def pack_workflow(workflow_path: Path, destination: Path, *, publisher: str = "community", sign_key: Path | None = None) -> Path:
+def pack_workflow(workflow_path: Path, destination: Path, *, publisher: str = "community", sign_key: Path | None = None, release_version: str | None = None) -> Path:
     workflow = load_workflow(workflow_path)
     if not publisher or len(publisher) > 80 or any(c in publisher for c in "\r\n\\"):
         raise WorkflowError("publisher must be a short printable name")
@@ -40,6 +41,10 @@ def pack_workflow(workflow_path: Path, destination: Path, *, publisher: str = "c
         "workflowSha256": hashlib.sha256(payload).hexdigest(),
         "license": "review-original-workflow-license",
     }
+    if release_version is not None:
+        if sign_key is None or not isinstance(release_version, str) or not re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", release_version):
+            raise WorkflowError("release_version requires signing and a major.minor.patch version")
+        manifest["releaseVersion"] = release_version
     if sign_key is not None:
         from .trust import sign_bytes
         manifest["packageVersion"] = 2
@@ -80,6 +85,10 @@ def inspect_package(path: Path, *, trust_key: Path | None = None) -> tuple[dict[
         fields = {"packageVersion", "name", "description", "target", "publisher", "workflowSha256", "license"}
         if mf["packageVersion"] == 2:
             fields.update({"signatureAlgorithm", "publicKey", "signature"})
+            if "releaseVersion" in mf:
+                fields.add("releaseVersion")
+                if not isinstance(mf["releaseVersion"], str) or not re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", mf["releaseVersion"]):
+                    raise WorkflowError("invalid signed release version")
         if set(mf) != fields:
             raise WorkflowError("invalid package manifest fields")
         if mf["packageVersion"] == 2:
@@ -121,7 +130,7 @@ def download_package(url: str, expected_sha256: str, *, directory: Path) -> Path
         raise WorkflowError("package downloads require a direct HTTPS URL")
     if len(expected_sha256) != 64 or any(c not in "0123456789abcdef" for c in expected_sha256):
         raise WorkflowError("expected_sha256 must be a lowercase SHA-256 hex digest")
-    req = Request(url, headers={"User-Agent": "Human2API/0.2.1"})
+    req = Request(url, headers={"User-Agent": "Human2API/0.4.0"})
     from .healing import _NoRedirect
     from urllib.request import build_opener
     with build_opener(_NoRedirect()).open(req, timeout=15) as res:
@@ -162,7 +171,8 @@ def remote_catalog(url: str = DEFAULT_CATALOG_URL) -> list[dict[str, Any]]:
     """Read a public HTTPS JSON index; never executes any downloaded content.
 
     The server's `sha256` field protects package *integrity only*. Index/host
-    control determines which SHA is trusted; no publisher signatures yet.
+    control determines which SHA is trusted. Use pinned-key registry installation
+    for authenticated publisher packages.
     """
     parsed = urlparse(url)
     if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.fragment:
@@ -170,7 +180,7 @@ def remote_catalog(url: str = DEFAULT_CATALOG_URL) -> list[dict[str, Any]]:
     from urllib.request import build_opener
     from .healing import _NoRedirect
     try:
-        with build_opener(_NoRedirect()).open(Request(url, headers={"User-Agent": "Human2API/0.2.1"}), timeout=12) as response:
+        with build_opener(_NoRedirect()).open(Request(url, headers={"User-Agent": "Human2API/0.4.0"}), timeout=12) as response:
             if int(response.headers.get("Content-Length", "0")) > MAX_REGISTRY:
                 raise WorkflowError("remote catalog is too large")
             payload = response.read(MAX_REGISTRY + 1)

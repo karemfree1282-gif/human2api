@@ -1,102 +1,39 @@
-# APIs: MCP and localhost REST
+# Interfaces - v0.4.0
 
-## MCP over stdio
+## Local REST
 
-```bash
-h2a mcp --directory /absolute/path/to/workflows
-```
+`h2a serve` opens `http://127.0.0.1:8765`. The page receives a per-server token; all `/api/` calls require `X-H2A-Token`. Host/Origin must match. Do not expose this service publicly. The independent registry is documented in [REGISTRY.md](REGISTRY.md).
 
-The MCP server uses JSON-RPC 2.0 line-delimited messages over stdin/stdout with the 2025-11-25 protocol compatibility response. It supports `initialize`, `ping`, `tools/list`, `tools/call`, `resources/list`, and `prompts/list` (the last two return empty lists). Notifications have no response.
+`GET /api/openapi.json` returns OpenAPI 3.1 with typed workflow input schemas. `h2a complete --repair` regenerates the checked-in example; live installed workflows can differ.
 
-Each JSON workflow exposes exactly one MCP tool named `h2a_<name>`. Its argument schema follows the declared `inputs`. `h2a_list_workflows` reports installed workflows. No LLM service is called by the server.
+| Route | Purpose |
+| --- | --- |
+| `GET /api/workflows`, `/api/workflows/{name}` | List/inspect definitions |
+| `POST /api/run/{name}` | `{inputs, approve, healSelectors, aiHeal}`; returns 202 and runId |
+| `GET /api/runs/{runId}` | Progress/result with bounded retention |
+| `POST /api/runs/{runId}/cancel` | Cooperative cancellation, not OS rollback |
+| `GET /api/history` | Persistent metadata only |
+| `GET /api/editor/workflows/{name}` | Definition and revision |
+| `POST /api/editor/validate` | Validate without executing |
+| `POST /api/editor/save/{name}` | Required `If-Match` revision (`new` to create); conflict 409 |
+| `GET /api/platforms` | Dependency probes, not hardware certification |
+| `GET /api/catalog`, `/api/catalog/remote` | Package listings, not trusted auto-installation |
+| `GET /api/schedules`, `/api/recorder` | Schedule/recording status |
 
-MCP example initialization:
+A token does not replace write consent. `aiHeal:true` separately permits configured-provider metadata transfer. There is no public registry execution endpoint.
+
+## MCP stdio
+
+Run `h2a mcp --directory /absolute/path/to/workflows`. UTF-8 JSON-RPC messages are newline-delimited; stdout is protocol-only. Every valid workflow exposes a typed `h2a_<name>` tool. Clients must present human approval; writes also require `H2A_ALLOW_WRITE=1`.
+
+Modern clients use 2026-07-28 metadata and `server/discover`. Legacy 2024-11-05, 2025-03-26, 2025-06-18 and 2025-11-25 initialized sessions are handled separately. Unsupported versions produce a structured error. Bounded tool calls do not block the input loop; cancellation/progress work during cooperative waits. Native OS calls may finish before observing cancellation. EOF cancels active work. Pagination binds cursors to a workflow-directory snapshot.
 
 ```json
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"demo","version":"1.0"}}}
+{"mcpServers":{"human2api":{"command":"h2a","args":["mcp","--directory":"/absolute/path/to/workflows"],"env":{"H2A_ALLOW_WRITE":"0"}}}}
 ```
 
-Read-only workflows can run without `H2A_ALLOW_WRITE`. Workflows marked `write` require that environment variable to be set to `1`. **Only enable it after reviewing the JSON workflows and your MCP client's permission prompts**. The server itself does not display a consent dialog for stdio tool calls.
+## CLI
 
-## REST on localhost
+New commands: `init`, `studio`, `batch`, `vault`, `registry`, `registry-install`, `complete`. Each exposes `--help`. `pack --sign-key publisher.pem --release-version 1.0.0` binds a registry release to its signature. Legacy local packages remain inspectable but unsigned packages cannot become trusted registry releases.
 
-```bash
-h2a serve --port 8765
-```
-
-Open the dashboard in the browser. Its served HTML contains a fresh API token in the `h2a-token` meta tag; the dashboard automatically sends this token using the `X-H2A-Token` header. There is no persistent hard-coded credential. Do not expose the REST listener via a public proxy.
-
-Available routes:
-
-| Verb | Route | Description |
-| --- | --- | --- |
-| GET | `/health` | Readiness, no token needed |
-| GET | `/api/workflows` | List installed workflows |
-| GET | `/api/workflows/{name}` | Fetch one workflow JSON |
-| POST | `/api/save/{name}` | Save validated JSON (`name` must match) |
-| POST | `/api/run/{name}` | Launch run, returns `runId` |
-| GET | `/api/runs/{runId}` | Poll progress until completed/failed/cancelled |
-| POST | `/api/runs/{runId}/cancel` | Request cooperative cancellation (body `{}`) |
-| POST | `/api/record` | Start local visible Chromium recording |
-| GET | `/api/recorder` | Query recording process status |
-| GET | `/api/openapi.json` | Generated OpenAPI 3.1 contract |
-
-POST example, substituting your dashboard's ephemeral token:
-
-```bash
-curl http://127.0.0.1:8765/api/run/create_invoice \
-  -H "X-H2A-Token: YOUR_CURRENT_LOCAL_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"inputs":{"customer_name":"Alex","amount":49.99},"approve":true}'
-```
-
-Response: HTTP 202 with a runId. Poll `GET /api/runs/{runId}` with the same token for results. Error details exclude declared secret arguments on a best-effort basis; do not expose sensitive workflows publicly.
-
-## Generate machine-readable OpenAPI
-
-```bash
-h2a openapi --directory workflows --port 8765 --output openapi.json
-```
-
-This generates a separate typed `POST /api/run/<name>` path for each valid workflow; input types and required fields come from the workflow.
-
-## Troubleshooting
-
-- `Chromium is not installed`: run `python -m playwright install chromium` or set `H2A_BROWSER_PATH`.
-- `workflow has write permissions`: add `--approve` to a CLI call, check the dashboard approval checkbox, or set `H2A_ALLOW_WRITE=1` **only in a trusted MCP environment**.
-- `navigation is outside allowedHosts`: review target domains and add specific hostnames, with no wildcards.
-- `no matching element`: update the CSS selector or add alternatives in the workflow JSON.
-- `invalid Host/Origin`: access `http://127.0.0.1:<port>` or `http://localhost:<port>` directly, not through a reverse proxy.
-
-## v0.2 target selection
-
-Every workflow may set `"target": "browser"` (default for legacy v0.1 JSON), `"desktop"`, or `"android"`. For desktop/Android, omit `startUrl` and `allowedHosts`. Android may specify `deviceSerial` to enforce connection to a specific authorized device.
-
-Run requests accept optional booleans `healSelectors` (local semantic fallback) and `aiHeal` (explicit permission to send sanitized browser element metadata to the configured model provider). `aiHeal` implies `healSelectors`. These options are browser-only. The server also exposes `GET /api/platforms` and `GET /api/catalog` (both require the local token).
-
-### Desktop actions
-
-`click(x,y)`, `double_click(x,y)`, `move(x,y)`, `scroll(delta)`, `type_text(value)`, `press(key)`, `hotkey(keys[])`, `wait_ms(durationMs)`, `screenshot(filename)`, `assert_image(image)`.
-
-The image assertion loads reference PNGs from `assets/` adjacent to the workflows/runs folders; OpenCV is an optional extra. Screen coordinates must be adjusted for each screen. The desktop recorder records mouse events only.
-
-### Android actions
-
-`tap(x,y)`, `tap_text(selector,by)`, `swipe(x,y,x2,y2,durationMs)`, `input_text(value)`, `keyevent(key)`, `wait_ms(durationMs)`, `assert_text(text)`, `extract_text(selector,as,by)`, `screenshot(filename)`.
-
-`by` is `text` (default), `resource-id`, or `content-desc`, matched exactly in UIAutomator XML. No root, no APK or shell script is installed on the phone. `input_text` is limited to printable ASCII letters/digits/spaces and `.,_@-`.
-
-### Workflow packages
-
-`h2a pack`, `h2a verify`, `h2a catalog` and `h2a install --approve` use a checksummed local JSON-only `.h2a.zip`. Online discovery, third-party signed publishers, or account-based ratings are not implemented.
-
-## v0.3 execution controls
-
-- Local API: at most two concurrent executions. Excess requests return HTTP 429.
-- To cancel, send `POST /api/runs/<runId>/cancel` with header `X-H2A-Token` and JSON `{}`. Cancellation is cooperative; current Playwright/ADB calls may need to finish before the run stops.
-- `GET /api/runs/<runId>` returns the current state and `lastStep` metadata without input values.
-- `h2a plan <workflow> --data-file inputs.json` validates inputs and prints **only field names** and action names. Nothing executes.
-- Native Windows desktop steps: `ui_click`, `ui_fill`, `ui_assert_text`, `ui_extract_text`. Require `windowTitle` and exactly-identifying `automationId` or `name`.
-- Read-only `wait`, `assert_text`, `extract_text`, `assert_image`, `ui_assert_text`, `ui_extract_text` can take `retries` (0–3) and `retryDelayMs` (100–10,000). **Mutating actions cannot auto-retry**, to avoid duplicate writes.
-- Local dashboard and REST endpoints `GET /api/schedules`, `POST /api/schedules/add`, and `POST /api/schedules/remove` manage opt-in schedules. Optional foreground `h2a scheduler` runs locally authorized workflows. Values reside in a private JSON input file; only its absolute path is saved in `.h2a/schedules.json`. The scheduler does not start automatically.
-- Package `packageVersion:2` uses Ed25519 signatures. A pinned public key is checked with `--trust-key`; a valid package signature does not imply publisher trust without pinning. Unsigned v1 packages remain installable by explicit approval.
+References: https://modelcontextprotocol.io/specification ; https://developer.android.com/reference/android/accessibilityservice/AccessibilityService ; https://playwright.dev/python/docs/intro

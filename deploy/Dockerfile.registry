@@ -1,0 +1,12 @@
+FROM python:3.12-slim
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+RUN groupadd --gid 10001 h2a && useradd --uid 10001 --gid h2a --create-home h2a
+WORKDIR /app
+COPY pyproject.toml README.md LICENSE ./
+COPY src ./src
+RUN python -m pip install --no-cache-dir '.[signing]' && mkdir /data && chown 10001:10001 /data
+USER 10001:10001
+VOLUME ["/data"]
+EXPOSE 8770
+ENTRYPOINT ["python", "-m", "human2api.registry"]
+CMD ["serve", "--directory", "/data/registry"]

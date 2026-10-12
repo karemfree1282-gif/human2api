@@ -1,18 +1,15 @@
-# Human2API workflow community catalog
+# Workflow sharing
 
-**Currently a local verified-package directory**, not a hosted marketplace or an official list of trusted publishers.
+A static community JSON index and a separately runnable registry are included. The index is not identity verification. The registry has publisher accounts, immutable versions, search, reviews, revocation and backup/restore, but needs operator enrollment and actual HTTPS hosting. No invented users/reviews or hosted-service claims.
 
-## Submit an example
+See [operations](../docs/REGISTRY.md) and [security](../SECURITY.md).
 
-1. Use non-production demo accounts, deterministic screenshots and editable input placeholders. Never commit secrets, cookies, device serials or private URLs.
-2. Validate with `h2a check NAME`, run a test in a sandbox, and `h2a pack NAME --output catalog/NAME.h2a.zip`.
-3. Open a pull request with the JSON workflow in `examples/community/`, steps to reproduce it, expected target OS/browser/app versions, and a short screen recording with no personal data.
-4. Maintainers can include reviewed packages in the local catalog. A SHA-256 is an integrity check **not** a signature. Automated trust/reputation ratings are not implemented.
+```bash
+h2a keygen --private publisher.pem --public publisher.pub.pem
+h2a pack reviewed_skill --output reviewed.h2a.zip --publisher alice --sign-key publisher.pem --release-version 1.0.0
+h2a verify reviewed.h2a.zip --trust-key publisher.pub.pem
+```
 
-## License
+Keep private keys outside source control. A release's submitted version must match its signed version. Keys obtained only from the untrusted package are not independent trust anchors.
 
-Examples must have appropriate redistribution permission. Do not use published workflows to access accounts or services without authorization.
-
-## Signed package v2 (Ed25519)
-
-Publisher workflow authors may use `h2a keygen`, then sign `h2a pack ... --sign-key private.pem`. Users who obtained the publisher's public key via a trusted independent channel can use `h2a verify ... --trust-key publisher-public.pem` or `h2a install ... --trust-key publisher-public.pem --approve`. The signature binds publisher metadata and the checksum of the workflow JSON. A signature never means workflows are safe by itself. Unsigned v1 packages remain supported for backward compatibility. The public index currently lists URLs and hashes, not verified publisher accounts.
+Community examples must use synthetic data, authorized accounts, clear permissions, reproducible assertions and redistribution-compatible licensing. Submit inspectable JSON and target app/OS versions for review. Checksums establish integrity, not trust. No executable archive attachments or unauthorized automation.

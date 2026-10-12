@@ -77,7 +77,7 @@ def test_desktop_runner_with_mock_gui(tmp_path, monkeypatch):
     gui = MagicMock()
     gui.screenshot.return_value = FakeScreenshot()
     monkeypatch.setattr(desktop, "_gui", lambda: gui)
-    data = desktop_flow()
+    data = desktop_flow(allowSensitiveArtifacts=True)
     with pytest.raises(WorkflowError, match="approve"):
         run_workflow(data, {"customer": "Adam"}, artifacts_dir=tmp_path)
     result = run_workflow(data, {"customer": "Adam"}, approve_writes=True, artifacts_dir=tmp_path)
@@ -118,7 +118,7 @@ def test_android_session_discovery_and_commands(monkeypatch):
         calls.append(args)
         if args == ["adb", "devices"]:
             return SimpleNamespace(stdout="List of devices attached\nemulator-5554\tdevice\nother\tunauthorized\n")
-        if args[-3:] == ["exec-out", "cat", "/sdcard/window.xml"]:
+        if args[-3:-1] == ["exec-out", "cat"] and args[-1].startswith("/data/local/tmp/human2api-"):
             return SimpleNamespace(stdout=xml)
         if args[-3:] == ["exec-out", "screencap", "-p"]:
             return SimpleNamespace(stdout=b"\x89PNG\r\n")
@@ -193,10 +193,10 @@ def test_healing_rejects_insecure_external_endpoint(monkeypatch):
         healing._ai_endpoint()
 
 
-def test_runner_rejects_ai_without_consent_or_wrong_target(tmp_path):
+def test_runner_rejects_ai_without_consent_and_sensitive_artifacts(tmp_path):
     with pytest.raises(WorkflowError, match="explicit"):
         run_workflow(desktop_flow(), {"customer": "a"}, approve_writes=True, artifacts_dir=tmp_path, ai_heal=True)
-    with pytest.raises(WorkflowError, match="browser workflows only"):
+    with pytest.raises(WorkflowError, match="allowSensitiveArtifacts"):
         run_workflow(desktop_flow(), {"customer": "a"}, approve_writes=True, artifacts_dir=tmp_path, ai_heal=True, heal_selectors=True)
 
 

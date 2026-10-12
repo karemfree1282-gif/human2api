@@ -18,3 +18,14 @@ recordings/
 coverage.xml
 .coverage
 htmlcov/
+.h2a/
+evidence/
+android-companion/**/build/
+android-companion/.gradle/
+android-companion/local.properties
+*.keystore
+*.jks
+*.pem
+native-output/
+android-output/
+*.spec

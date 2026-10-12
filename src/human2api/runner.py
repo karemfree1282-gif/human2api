@@ -41,22 +41,32 @@ def _safe_navigation(url: str, hosts: set[str]) -> None:
         raise WorkflowError(f"navigation is outside allowedHosts: {parsed.hostname or '[invalid URL]'}")
 
 
+def _scope(page: Any, step: dict[str, Any]) -> Any:
+    target = page
+    chain = step.get("frames") or ([step["frame"]] if step.get("frame") else [])
+    for selector in chain:
+        target = target.frame_locator(selector)
+    return target
+
+
 def _locator(page: Page, step: dict[str, Any], timeout_ms: int, *, heal: bool = False, ai_heal: bool = False, outputs: dict[str, Any] | None = None) -> Any:
     selectors = [step["selector"], *step.get("alternatives", [])]
-    target = page.frame_locator(step["frame"]) if step.get("frame") else page
+    target = _scope(page, step)
     last_error = None
     # Wait for the first match, using selectors captured at recording time.
     per_selector = max(250, timeout_ms // len(selectors))
     for selector in selectors:
         try:
-            loc = target.locator(selector).first
-            loc.wait_for(state="attached", timeout=per_selector)
+            loc = target.locator(selector)
+            loc.first.wait_for(state="attached", timeout=per_selector)
+            if loc.count() != 1:
+                raise WorkflowError("ambiguous selector; refusing to choose the first element")
             return loc
         except PlaywrightError as exc:
             last_error = exc
     if heal:
         from .healing import recover
-        suggestion = recover(target, step, ai=ai_heal and not step.get("frame"))
+        suggestion = recover(target, step, ai=ai_heal)
         if suggestion is not None:
             loc, hint = suggestion
             if outputs is not None:
@@ -106,8 +116,11 @@ def _run_step(page: Page, step: dict[str, Any], values: dict[str, Any], artifact
         locator.hover(timeout=timeout_ms)
         page.mouse.wheel(0, step.get("delta", 1) * 120)
     elif action == "drag":
-        target = page.frame_locator(step["frame"]) if step.get("frame") else page
-        locator.drag_to(target.locator(step["targetSelector"]).first, timeout=timeout_ms)
+        target = _scope(page, step)
+        destination = target.locator(step["targetSelector"])
+        if destination.count() != 1:
+            raise WorkflowError("drag destination must be unique")
+        locator.drag_to(destination, timeout=timeout_ms)
     elif action == "wait":
         locator.wait_for(state="visible", timeout=timeout_ms)
     elif action == "assert_text":
@@ -131,7 +144,7 @@ def _run_step(page: Page, step: dict[str, Any], values: dict[str, Any], artifact
         raise WorkflowError(f"unsupported action: {action}")
 
 
-def run_workflow(
+def _run_workflow(
     workflow: dict[str, Any],
     provided_inputs: dict[str, Any] | None = None,
     *,
@@ -157,8 +170,6 @@ def run_workflow(
     target = workflow.get("target", "browser")
     if ai_heal and not heal_selectors:
         raise WorkflowError("AI healing requires explicit selector-healing consent")
-    if ai_heal and target != "browser":
-        raise WorkflowError("AI selector healing currently applies to browser workflows only")
     hosts = set(workflow.get("allowedHosts") or ([urlparse(workflow["startUrl"]).hostname] if target == "browser" else []))
     if target == "browser":
         _safe_navigation(workflow["startUrl"], hosts)
@@ -168,7 +179,7 @@ def run_workflow(
         raise WorkflowError("invalid run identifier")
     check_cancelled(cancel_event)
     artifacts = Path(artifacts_dir).resolve() / f"{workflow['name']}-{run_id}"
-    artifacts.mkdir(parents=True, exist_ok=False)
+    artifacts.mkdir(parents=True, exist_ok=False, mode=0o700)
     started = time.monotonic()
     current_index = 0
     outputs: dict[str, Any] = {}
@@ -176,10 +187,10 @@ def run_workflow(
         if target in {"desktop", "android"}:
             if target == "desktop":
                 from .desktop import execute_desktop
-                outputs = execute_desktop(workflow, values, artifacts, on_step=on_step, cancel_event=cancel_event)
+                outputs = execute_desktop(workflow, values, artifacts, on_step=on_step, cancel_event=cancel_event, heal=heal_selectors, ai=ai_heal)
             else:
                 from .android import execute_android
-                outputs = execute_android(workflow, values, artifacts, on_step=on_step, cancel_event=cancel_event)
+                outputs = execute_android(workflow, values, artifacts, on_step=on_step, cancel_event=cancel_event, heal=heal_selectors, ai=ai_heal)
             return {"ok": True, "workflow": workflow["name"], "target": target, "runId": run_id,
                     "steps": len(workflow["steps"]), "durationMs": round((time.monotonic() - started) * 1000), "outputs": outputs}
         with sync_playwright() as playwright:
@@ -188,7 +199,7 @@ def run_workflow(
                 context = browser.new_context(accept_downloads=True, service_workers="block")
                 blocked_navigations: list[str] = []
                 def navigation_gate(route: Route) -> None:
-                    if route.request.is_navigation_request():
+                    if workflow.get("networkPolicy", "navigation") == "strict" or route.request.is_navigation_request():
                         try:
                             _safe_navigation(route.request.url, hosts)
                         except WorkflowError:
@@ -197,6 +208,8 @@ def run_workflow(
                             return
                     route.continue_()
                 context.route("**/*", navigation_gate)
+                if workflow.get("networkPolicy") == "strict" and hasattr(context, "route_web_socket"):
+                    context.route_web_socket("**/*", lambda ws: ws.close())
                 page = context.new_page()
                 page.set_default_timeout(7000)
                 page.goto(workflow["startUrl"], wait_until="domcontentloaded", timeout=20000)
@@ -240,3 +253,36 @@ def run_workflow(
         "durationMs": round((time.monotonic() - started) * 1000),
         "outputs": outputs,
     }
+
+
+def run_workflow(workflow: dict[str, Any], provided_inputs: dict[str, Any] | None = None, **kwargs: Any) -> dict[str, Any]:
+    """Validate, acquire the native-device lease, execute and scrub secret outputs."""
+    from .execution import target_lease
+    validate_workflow(workflow)
+    values = validate_inputs(workflow, provided_inputs or {})
+    if workflow.get("permissions", "write") == "write" and not kwargs.get("approve_writes", False):
+        raise WorkflowError("workflow has write permissions; pass --approve")
+    if kwargs.get("ai_heal") and not kwargs.get("heal_selectors"):
+        raise WorkflowError("AI healing requires explicit selector-healing consent")
+    has_secrets = any(spec.get("secret") and key in values for key, spec in workflow.get("inputs", {}).items())
+    if has_secrets and not workflow.get("allowSensitiveArtifacts", False):
+        if any(step["action"] in {"screenshot", "download"} for step in workflow["steps"]):
+            raise WorkflowError("secret inputs with screenshots/downloads require explicit allowSensitiveArtifacts approval in the workflow")
+    with target_lease(workflow.get("target", "browser")):
+        result = _run_workflow(workflow, values, **kwargs)
+    def scrub(value: Any) -> Any:
+        if isinstance(value, str):
+            for key, spec in sorted(workflow.get("inputs", {}).items(), key=lambda pair: -len(str(values.get(pair[0], "")))):
+                if spec.get("secret") and key in values and str(values[key]):
+                    value = value.replace(str(values[key]), "[REDACTED]")
+            return value
+        if isinstance(value, list):
+            return [scrub(x) for x in value]
+        if isinstance(value, dict):
+            return {k: scrub(v) for k, v in value.items()}
+        return value
+    for artifact in result.get("outputs", {}).get("artifacts", []):
+        path = Path(artifact)
+        if path.is_file() and not path.is_symlink():
+            path.chmod(0o600)
+    return scrub(result)

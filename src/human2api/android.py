@@ -1,4 +1,4 @@
-"""ADB-backed Android UI automation; no root or Android agent APK required.
+"""Authorized ADB automation plus an optional consent-based Unicode companion.
 
 All subprocess calls use argument arrays and never execute a shell on the host.
 Selected device serials are validated and ambiguous device selections fail closed.
@@ -6,6 +6,8 @@ Selected device serials are validated and ambiguous device selections fail close
 from __future__ import annotations
 
 import re
+import secrets
+import os
 import shutil
 import subprocess
 import time
@@ -57,9 +59,18 @@ class AndroidSession:
         return completed.stdout if binary else completed.stdout.decode("utf-8", errors="replace")
 
     def dump_ui(self) -> ET.Element:
-        # UIAutomator writes an XML file on the device; pull bytes via exec-out.
-        self.command("shell", "uiautomator", "dump", "/sdcard/window.xml", timeout=30)
-        xml = self.command("exec-out", "cat", "/sdcard/window.xml", binary=True)
+        # Use a per-call private temporary path, never a shared /sdcard dump.
+        remote = "/data/local/tmp/human2api-" + secrets.token_hex(12) + ".xml"
+        try:
+            self.command("shell", "uiautomator", "dump", remote, timeout=30)
+            self.command("shell", "chmod", "600", remote)
+            xml = self.command("exec-out", "cat", remote, binary=True)
+        finally:
+            try:
+                self.command("shell", "rm", "-f", remote, timeout=10)
+            except WorkflowError:
+                # Do not hide a failed cleanup behind a success claim.
+                raise WorkflowError("Android UI snapshot cleanup failed; remove the temporary human2api XML file from /data/local/tmp") from None
         if len(xml) > 5 * 1024 * 1024:
             raise WorkflowError("Android UI hierarchy exceeds size limit")
         try:
@@ -71,13 +82,17 @@ class AndroidSession:
         attribute = {"text": "text", "resource-id": "resource-id", "content-desc": "content-desc"}.get(by)
         if attribute is None:
             raise WorkflowError("invalid Android UI selector kind")
-        nodes = [n for n in self.dump_ui().iter("node") if n.get(attribute) == selector]
+        nodes = [n for n in self.dump_ui().iter("node") if n.get(attribute) == selector and n.get("password") != "true" and n.get("visible-to-user", "true") != "false"]
         if len(nodes) != 1:
             raise WorkflowError(f"Android selector must match exactly one element (matched {len(nodes)})")
         return nodes[0]
 
     def tap_node(self, selector: str, by: str = "text") -> None:
-        node = self.find_node(selector, by)
+        self.tap_resolved(self.find_node(selector, by))
+
+    def tap_resolved(self, node: ET.Element) -> None:
+        if node.get("enabled", "true") != "true":
+            raise WorkflowError("Android control is disabled")
         bounds = BBOX_RE.fullmatch(node.get("bounds", ""))
         if bounds is None:
             raise WorkflowError("Android element missing valid bounds")
@@ -87,6 +102,37 @@ class AndroidSession:
         self.command("shell", "input", "tap", str((x1 + x2) // 2), str((y1 + y2) // 2))
 
 
+def resolve_node(session: AndroidSession, step: dict[str, Any], values: dict[str, Any], *, package: str | None,
+                 heal: bool = False, ai: bool = False, audit: list | None = None) -> ET.Element:
+    selector, by = template(step["selector"], values), step.get("by", "text")
+    try:
+        node = session.find_node(selector, by)
+        if package and node.get("package") != package:
+            raise WorkflowError("Android control is outside the approved package")
+        return node
+    except WorkflowError as exc:
+        if not heal or not package or "matched 0" not in str(exc):
+            raise
+    from .healing import recover_metadata
+    root = session.dump_ui()
+    candidates=[]
+    for item in root.iter("node"):
+        if item.get("package") != package or item.get("password") == "true" or item.get("visible-to-user", "true") != "true":
+            continue
+        candidates.append({"automationId":item.get("resource-id", ""), "name":item.get("content-desc", ""), "controlType":item.get("class", "")})
+    choice = recover_metadata(step, candidates, ai=ai)
+    if choice is None:
+        raise WorkflowError("Android selector recovery could not identify a safe match")
+    key = "resource-id" if choice.get("automationId") else "content-desc"
+    value = choice.get("automationId") or choice.get("name", "")
+    node = session.find_node(value, key)
+    if node.get("package") != package:
+        raise WorkflowError("recovered Android control is outside the approved package")
+    if audit is not None:
+        audit.append({"action":step["action"], "recovered":True, "reviewRequired":True})
+    return node
+
+
 def encode_adb_text(value: str) -> str:
     """ADB input text is ASCII only and treats %s as space; do not invoke a shell."""
     if not value or len(value) > 1000 or not re.fullmatch(r"[A-Za-z0-9 .,_@-]+", value):
@@ -94,7 +140,7 @@ def encode_adb_text(value: str) -> str:
     return value.replace(" ", "%s")
 
 
-def execute_android(workflow: dict[str, Any], values: dict[str, Any], artifacts: Path, on_step: Callable | None = None, *, cancel_event: Any = None) -> dict[str, Any]:
+def execute_android(workflow: dict[str, Any], values: dict[str, Any], artifacts: Path, on_step: Callable | None = None, *, cancel_event: Any = None, heal: bool = False, ai: bool = False) -> dict[str, Any]:
     session = AndroidSession(workflow.get("deviceSerial"))
     outputs: dict[str, Any] = {}
     for i, step in enumerate(workflow["steps"], 1):
@@ -103,14 +149,42 @@ def execute_android(workflow: dict[str, Any], values: dict[str, Any], artifacts:
         if on_step:
             on_step(i, action, "running")
         try:
-            if action == "tap":
+            if workflow.get("appPackage") and action not in {"wait_ms"}:
+                root = session.dump_ui()
+                nodes = list(root.iter("node"))
+                active_package = next((n.get("package") for n in nodes if n.get("package")), None)
+                if active_package != workflow["appPackage"]:
+                    raise WorkflowError("Android active app differs from approved appPackage")
+            if action in {"set_text", "scroll_node"}:
+                from .companion import action as companion_action
+                selector, by = template(step["selector"], values), step.get("by", "resource-id")
+                if heal:
+                    node = resolve_node(session, {**step, "by":by}, values, package=workflow["appPackage"], heal=heal, ai=ai, audit=outputs.setdefault("healing", []))
+                    by = "resource-id" if node.get("resource-id") else "content-desc"
+                    selector = node.get(by, "")
+                companion_action(workflow["appPackage"], "set_text" if action == "set_text" else "scroll_"+step["direction"],
+                                 selector=selector, by=by, value=template(step["value"], values) if action == "set_text" else None)
+            elif action == "tap":
                 session.command("shell", "input", "tap", str(step["x"]), str(step["y"]))
             elif action == "tap_text":
-                session.tap_node(template(step["selector"], values), step.get("by", "text"))
+                node = resolve_node(session, step, values, package=workflow.get("appPackage"), heal=heal, ai=ai, audit=outputs.setdefault("healing", []))
+                if os.environ.get("H2A_ANDROID_BRIDGE_TOKEN") and workflow.get("appPackage") and (node.get("resource-id") or node.get("content-desc")):
+                    from .companion import action as companion_action
+                    by = "resource-id" if node.get("resource-id") else "content-desc"
+                    companion_action(workflow["appPackage"], "click", selector=node.get(by, ""), by=by)
+                else:
+                    session.tap_resolved(node)
             elif action == "swipe":
                 session.command("shell", "input", "swipe", *[str(step[k]) for k in ("x", "y", "x2", "y2")], str(step.get("durationMs", 300)))
             elif action == "input_text":
-                session.command("shell", "input", "text", encode_adb_text(template(step["value"], values)))
+                text = template(step["value"], values)
+                if os.environ.get("H2A_ANDROID_BRIDGE_TOKEN"):
+                    from .companion import action as companion_action
+                    if not workflow.get("appPackage"):
+                        raise WorkflowError("companion text input requires appPackage")
+                    companion_action(workflow["appPackage"], "set_text", value=text)
+                else:
+                    session.command("shell", "input", "text", encode_adb_text(text))
             elif action == "keyevent":
                 if step["key"] not in KEYCODES:
                     raise WorkflowError("Android keyevent not on the safe allowlist")
@@ -120,11 +194,14 @@ def execute_android(workflow: dict[str, Any], values: dict[str, Any], artifacts:
             elif action == "assert_text":
                 wanted = template(step["text"], values)
                 def assertion() -> None:
-                    if not any(wanted in node.get("text", "") or wanted in node.get("content-desc", "") for node in session.dump_ui().iter("node")):
+                    if not any((wanted in node.get("text", "") or wanted in node.get("content-desc", ""))
+                               and node.get("password") != "true" and node.get("visible-to-user", "true") != "false"
+                               and (not workflow.get("appPackage") or node.get("package") == workflow["appPackage"])
+                               for node in session.dump_ui().iter("node")):
                         raise WorkflowError("expected UI text not visible")
                 run_step_with_retry(step, assertion, cancel_event=cancel_event)
             elif action == "extract_text":
-                node = run_step_with_retry(step, lambda: session.find_node(template(step["selector"], values), step.get("by", "text")), cancel_event=cancel_event)
+                node = run_step_with_retry(step, lambda: resolve_node(session, step, values, package=workflow.get("appPackage"), heal=heal, ai=ai, audit=outputs.setdefault("healing", [])), cancel_event=cancel_event)
                 outputs[step["as"]] = (node.get("text", "") or node.get("content-desc", ""))[:10000]
             elif action == "screenshot":
                 file = step.get("filename", f"android-{i}.png")

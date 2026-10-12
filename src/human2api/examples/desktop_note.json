@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "name": "desktop_note",
+  "description": "Illustrative desktop workflow: click a known editor position and type supplied text",
+  "target": "desktop",
+  "permissions": "write",
+  "inputs": {
+    "note": {"type": "string", "description": "ASCII text to type into the open document", "required": true, "secret": false}
+  },
+  "steps": [
+    {"action": "click", "x": 440, "y": 280},
+    {"action": "type_text", "value": "{{note}}"},
+    {"action": "screenshot", "filename": "desktop-note.png"}
+  ]
+}

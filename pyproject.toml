@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "human2api"
-version = "0.3.0"
+version = "0.4.0"
 description = "Record browser, desktop, and Android tasks. Reuse workflows through CLI, REST and MCP."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -28,9 +28,11 @@ classifiers = [
 dependencies = ["playwright>=1.55,<2"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8,<10", "build>=1,<2", "Pillow>=10,<13", "jsonschema>=4,<5"]
+dev = ["pytest>=8,<10", "build>=1,<2", "Pillow>=10,<13", "jsonschema>=4,<5", "tomli>=2,<3; python_version < '3.11'", "cryptography>=42,<48"]
 desktop = ["pyautogui>=0.9.54,<1", "pynput>=1.7,<2", "opencv-python>=4.9,<5"]
-accessibility = ["pywinauto>=0.6.8,<1; sys_platform == 'win32'"]
+accessibility = ["pywinauto>=0.6.8,<1; sys_platform == 'win32'", "pyobjc-framework-ApplicationServices>=10; sys_platform == 'darwin'", "pyobjc-framework-Cocoa>=10; sys_platform == 'darwin'"]
+studio = ["pywebview>=5,<7"]
+vault = ["cryptography>=42,<48"]
 signing = ["cryptography>=42,<48"]
 
 [project.scripts]
@@ -45,7 +47,7 @@ Documentation = "https://github.com/karemfree1282-gif/human2api#readme"
 where = ["src"]
 
 [tool.setuptools.package-data]
-human2api = ["static/*"]
+human2api = ["static/*", "examples/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

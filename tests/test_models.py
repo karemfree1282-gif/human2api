@@ -89,7 +89,7 @@ def test_recorder_discards_values():
 
 
 def test_recorder_reuses_variable_name():
-    events=[{"action":"fill","selector":"#a","field":"some field"},{"action":"fill","selector":"#b","field":"some field"}]
+    events=[{"action":"fill","selector":"#a","field":"some field"},{"action":"fill","selector":"#a","field":"some field"}]
     wf=workflow_from_events("example","Example","https://example.com",events)
     assert len(wf["inputs"])==1
     assert wf["steps"][0]["value"]==wf["steps"][1]["value"]
@@ -106,3 +106,9 @@ def test_unexpected_step_fields_rejected(sample):
     sample['steps'][0]['python_code']='import os'
     with pytest.raises(WorkflowError, match='unknown fields'):
         validate_workflow(sample)
+
+
+def test_recorder_separates_same_named_controls():
+    events=[{"action":"fill","selector":"#a","field":"shared"},{"action":"fill","selector":"#b","field":"shared"}]
+    wf=workflow_from_events("distinct","Distinct fields","https://example.com",events)
+    assert len(wf["inputs"])==2

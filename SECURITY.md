@@ -1,45 +1,37 @@
-# Security policy
+# Security model and reporting
 
-**Status:** v0.2 developer preview. No public vulnerability disclosure channel is configured beyond GitHub private vulnerability reporting (if enabled by the repository owner). Do not post exploit details in public issues.
+Human2API automates user-approved applications. A valid workflow, signature or passing unit test is **not** proof that automation is harmless. Review source, permissions, destinations, inputs and assertions before sensitive runs. Use only accounts and devices you are authorized to control.
 
-## Report privately
+## Isolation and approvals
 
-Once the public repository is published, use its **Security > Report a vulnerability** option if GitHub private reporting is enabled. If it is not enabled, open a neutral issue asking the maintainer for a private contact channel without sharing details.
+The local REST service binds to loopback, validates Host/Origin, uses an unpredictable per-server token, rejects ambiguous request framing and bounds sizes/concurrent clients. Do not expose it through a tunnel or reverse proxy. The separate registry service supports HTTPS deployment and never executes uploaded workflows.
 
-## Important limitations
+Write workflows require explicit permission. MCP clients must obtain human approval before setting `H2A_ALLOW_WRITE=1`; the server does not provide a separate consent dialog. Creating a recurring schedule grants permission for its later runs. Even a read-classified browser action may have server-side effects: use approved test accounts and hosts.
 
-- Workflows can click destructive buttons, submit forms, and navigate to sensitive pages. Review workflows before executing and prefer test accounts.
-- Values typed during a recording are discarded. **Selectors, attribute names, and start URLs may still contain confidential tokens or personal information.** Review exported JSON before committing.
-- A workflow with an embedded URL query string can expose secrets. The recorder strips query strings and fragments from its initial URL. Manually edited workflow URLs are not automatically scrubbed.
-- Browser route navigation allowlists are a guardrail, **not a full network isolation boundary**. Browser Javascript and subresource fetches can contact other hosts.
-- The local dashboard is not designed to run on public internet hosts. It binds to 127.0.0.1, requires an ephemeral token and validates Host and Origin.
-- The MCP server does not display user approval prompts. `H2A_ALLOW_WRITE=1` authorizes write actions when requested by the connected agent. MCP client permissions remain essential.
-- Exported workflow files are unencrypted. Treat local filesystem and `runs/` as private.
-- No arbitrary code execution from workflow JSON is supported, but Playwright executes the target page's own Javascript in its browser context.
+Browser contexts are separate from ordinary browser profiles. `networkPolicy: "strict"` restricts intercepted HTTP requests to allowed hosts and blocks service workers/WebSockets. It is not a substitute for an OS/container egress firewall or an audit of third-party page code. Navigation-only mode allows subresource requests and is not a network sandbox.
 
-## Threat model to improve
+Desktop actions execute in the logged-in OS session, not an OS sandbox. Native controls must be uniquely resolvable, visible, enabled and non-password. Pointer actions remain focus/resolution-dependent. Cancellation is cooperative, not an instant interruption or rollback of arbitrary OS calls. Cross-process leases prevent cooperating Human2API processes from controlling the same device concurrently, not another application or human from changing it.
 
-A malicious page could change the selector target, trick a workflow into clicking unexpected controls, or abuse browser network access. We want signed verified community workflows, opt-in session isolation, stronger network boundaries and step-level consent before recommending use in high-stakes contexts.
+## Recording and secrets
 
-## Supported versions
+Recorders replace typed values with variables rather than capturing input contents, keys or clipboard data. Android requires explicit package-scoped recording/arming, a visible stop notification and a short-lived loopback token; stopping revokes it. Password controls are excluded. Opaque/inaccessible UI may not be recordable. IDs, labels, window titles and URLs can still identify people or systems: inspect every export.
 
-| Version | Security fixes |
-| --- | --- |
-| 0.1.x | Legacy alpha, limited maintenance |
-| 0.2.x | Best-effort fixes during developer preview |
+Vaults use authenticated AES-256-GCM and scrypt with random salts/nonces. Passphrases are prompted invisibly and never stored. Stale concurrent writes are rejected. Decrypted values exist in process memory; Python cannot guarantee secure erasure or defend against a compromised local account. Use a strong unique passphrase and OS disk encryption. POSIX files are owner-only; protect Windows profile/vault directories with appropriate ACLs. This is not a multi-user secrets server.
 
-## v0.2 platform threat model
+Persistent history stores status metadata, not inputs or result text. In-memory results are bounded and expire. Mark secret inputs explicitly: redaction cannot identify every transformed secret. Screenshots/downloads for workflows with secrets require separate `allowSensitiveArtifacts: true` permission. Private output directories still need operator retention/deletion policies. Never commit tokens, vaults, cookies, real input files or private signing keys.
 
-- **Desktop:** PyAutoGUI operates in the user's active GUI session. Authorize only on your own machine and review every coordinate/shortcut. Moving the pointer to the upper-left triggers the PyAutoGUI failsafe. The pointer-only recorder never captures keystrokes/passwords; runtime `type_text` values may still be visible to desktop programs.
-- **Android:** ADB works only with an authorized connected device. The adapter uses fixed argument arrays (no host shell), a strict device serial, exact UI text matching and an allowlisted subset of keys. `adb shell input text` supports only restricted ASCII and may expose arguments through device/system diagnostics. Use a test device and account.
-- **AI selector recovery:** OFF by default. With explicit opt-in, up to 70 element metadata records can leave your machine for the configured OpenAI-compatible endpoint; IDs and aria labels may contain identifying information. The model can only return a CSS selector, checked for a single visible match, and never silently changes source workflows. This feature is not suited to confidential apps without an approved provider/data-policy review.
-- **Community packages:** A `.h2a.zip` has exactly two JSON files. Sha256 guarantees only integrity, **not** author identity or safety. Explicitly review permissions, hosts, and steps prior to installing and running. No executable bundle payloads are allowed.
-- **General:** UI navigation allowlists are not a sandbox for page subresources. Do not expose the loopback REST server via tunneling or reverse proxies. There is no cloud authentication, secret vault, native mobile accessibility service, or signed marketplace in this release.
+## Recovery and retries
 
-## v0.3 signing, accessibility, cancellation and schedules
+Remote AI recovery is OFF by default and requires per-run consent. Sanitized metadata goes only to an explicitly configured HTTPS or loopback provider; labels can still identify people. Metadata is untrusted data, not instructions. Suggestions select only existing controls, re-resolved uniquely inside the original host/window/package scope. They cannot introduce code or silently rewrite workflows. Ambiguity fails closed. Only bounded read checks retry; uncertain mutations stop.
 
-- Signed `.h2a.zip` v2 uses Ed25519. Signature validity is not equivalent to trust: pin a publisher public key with `--trust-key`. Never upload a private signing key to GitHub or a workflow package. Key generation creates an owner-only private key on POSIX.
-- Windows UIA actions must select one visible, non-password element in one exactly named window. They can operate real desktop applications, so review all actions before granting `--approve`.
-- Cancellation is cooperative at step boundaries, interruptible waits and retries; Playwright/ADB or native operating-system calls cannot always be safely interrupted mid-operation. It is **not** a transactional rollback.
-- Recurring schedules are disabled until the local foreground worker is started. Schedules save only paths to private input files, not the values. Protect the input JSON with OS file permissions (0600 on POSIX), secure the local machine, and revoke schedules you no longer need.
-- The local REST API is for one trusted user on loopback, not for untrusted multi-tenant deployment. No cloud RBAC or network isolation is provided.
+## Packages and registry
+
+Packages contain exactly two JSON files. Executables, archive traversal, symlinks and excessive sizes are rejected. Legacy v1 checksums prove integrity only. Ed25519 v2 installation pins an independently obtained publisher key. Registry publishing also requires an enrolled account token and a signed `releaseVersion`; an old signed package cannot be relabeled as a new release. Signatures prove possession of a key, not safety or legal identity.
+
+The registry hashes tokens, keeps immutable versions, supports revocation/yanking, records administrative audit events and uses transactional SQLite storage. Operators independently verify publishers before enrollment. TLS, encrypted off-host backups, patching, monitoring and abuse protection are deployment responsibilities. Restoring an attacker-controlled database is not safe. Public registry routes are separate from the privileged runner.
+
+## Release status and reporting
+
+Native adapters/Android need physical-platform acceptance beyond mocked contracts. Native bundles are unsigned until owner-managed signing/notarization is configured. Checksums do not certify an OS publisher. GitHub Actions currently has an account billing lock; source patches cannot remove it.
+
+Use GitHub private vulnerability reporting if enabled. Otherwise ask for a private contact in an issue without posting exploit payloads, credentials or user data. No response-time SLA or independent security certification is currently promised.

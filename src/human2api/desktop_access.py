@@ -1,8 +1,7 @@
-"""Opt-in Windows UI Automation selectors for resilient native-app workflows.
+"""Explicitly scoped native accessibility operations: Windows UIA, macOS AX, Linux AT-SPI.
 
-This module does not start an accessibility listener or capture keystrokes. It
-queries exactly one named window and exactly one named child on demand. Requires
-Windows UI Automation (pywinauto); other OSes retain coordinate actions.
+Queries a unique visible non-password control in a named window. Never records
+keystrokes or grants OS permissions. Backend integration needs a real OS session.
 """
 from __future__ import annotations
 
@@ -13,8 +12,14 @@ from .models import WorkflowError, template
 
 
 def _desktop() -> Any:
+    if sys.platform == "darwin":
+        from .native import AXDesktop
+        return AXDesktop()
+    if sys.platform.startswith("linux"):
+        from .native import AtspiDesktop
+        return AtspiDesktop()
     if sys.platform != "win32":
-        raise WorkflowError("native UI Automation selectors require Windows; use coordinate workflows on macOS/Linux")
+        raise WorkflowError("unsupported native accessibility platform")
     try:
         from pywinauto import Desktop
     except ImportError as exc:
@@ -58,8 +63,22 @@ def locate_control(step: dict[str, Any]) -> Any:
     return matching[0]
 
 
-def execute_ui_step(step: dict[str, Any], values: dict[str, Any]) -> str | None:
-    item = locate_control(step)
+def execute_ui_step(step: dict[str, Any], values: dict[str, Any], *, heal: bool = False, ai: bool = False, audit: list | None = None) -> str | None:
+    try:
+        item = locate_control(step)
+    except WorkflowError as exc:
+        # Never heal an ambiguous match, a password input, or an inaccessible window.
+        if not heal or "matched 0" not in str(exc) or "window" in str(exc):
+            raise
+        from .healing import recover_metadata
+        suggestion = recover_metadata(step, inspect_window(step["windowTitle"]), ai=ai)
+        if suggestion is None:
+            raise
+        repaired = {k: v for k, v in step.items() if k not in {"name", "automationId", "controlType"}}
+        repaired.update({k: v for k, v in suggestion.items() if k in {"name", "automationId", "controlType"} and v})
+        item = locate_control(repaired)
+        if audit is not None:
+            audit.append({"action": step["action"], "recovered": True, "reviewRequired": True})
     action = step["action"]
     if action == "ui_click":
         if not item.is_enabled():
@@ -72,7 +91,7 @@ def execute_ui_step(step: dict[str, Any], values: dict[str, Any]) -> str | None:
         try:
             item.set_edit_text(template(step["value"], values))
         except (AttributeError, NotImplementedError) as exc:
-            raise WorkflowError("target control does not support UIA text input") from exc
+            raise WorkflowError("target control does not support native Unicode text input") from exc
     elif action in {"ui_assert_text", "ui_extract_text"}:
         value = item.window_text()
         if action == "ui_assert_text":
@@ -112,9 +131,9 @@ def inspect_window(window_title: str, *, limit: int = 60) -> list[dict[str, str]
 
 
 def selector_at_point(x: int, y: int) -> dict[str, str] | None:
-    """Best-effort UIA selector for a user-clicked point; NEVER captures edit values.
+    """Best-effort native accessibility selector for a user-clicked point; NEVER captures edit values.
 
-    Caller must explicitly opt in. If no stable automation ID is available,
+    Caller must explicitly opt in. If neither a stable automation ID nor a unique accessible name is available,
     return None so the recorder can save its ordinary pixel click instead.
     """
     try:
@@ -123,10 +142,16 @@ def selector_at_point(x: int, y: int) -> dict[str, str] | None:
             return None
         automation_id = _element_info(item, "automation_id")
         window = item.top_level_parent()
-        title = window.window_text()
-        if not automation_id or not 0 < len(title) <= 200 or len(automation_id) > 200:
+        title = _element_info(window, "name") or window.window_text()
+        if not 0 < len(title) <= 200 or len(automation_id) > 200:
             return None
-        return {"action": "ui_click", "windowTitle": title, "automationId": automation_id,
-                "controlType": _element_info(item, "control_type")[:200] or "Custom"}
+        name = _element_info(item, "name")
+        if not automation_id and (not name or len(name) > 200):
+            return None
+        result = {"action": "ui_click", "windowTitle": title,
+                  "controlType": _element_info(item, "control_type")[:200] or "Custom"}
+        result.update({"automationId": automation_id} if automation_id else {"name": name})
+        locate_control(result)  # Do not record an ambiguous accessible name.
+        return result
     except (AttributeError, RuntimeError, WorkflowError, OSError):
         return None

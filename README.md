@@ -1,234 +1,122 @@
 <div align="center">
-  <img src="docs/assets/logo.svg" alt="Human2API logo" width="84" />
+<img src="docs/assets/logo.svg" alt="Human2API" width="72" />
 
-  # Human2API
+# Human2API
 
-  **Teach a task once. Run it from your terminal, REST API, or any MCP-compatible AI agent.**
+**Teach a task. Inspect its steps. Run it as an MCP tool or API.**
 
-  <p>Browser · Windows / macOS / Linux desktop · Android (ADB) · Local-first · Open source</p>
+Browser · Windows UIA · macOS AX · Linux AT-SPI · Android companion
 
-  [![CI](https://github.com/karemfree1282-gif/human2api/actions/workflows/ci.yml/badge.svg)](https://github.com/karemfree1282-gif/human2api/actions/workflows/ci.yml)
-  [![Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-70ecc3)](LICENSE)
-  [![Python](https://img.shields.io/badge/python-3.10%2B-85b9ff)](pyproject.toml)
-  [![MCP](https://img.shields.io/badge/MCP-stdio-70ecc3)](docs/API.md)
-  [![Local-first](https://img.shields.io/badge/privacy-local--first-98d2ff)](SECURITY.md)
+[![CI](https://github.com/karemfree1282-gif/human2api/actions/workflows/ci.yml/badge.svg)](https://github.com/karemfree1282-gif/human2api/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
-  **[Arabic guide](docs/README_AR.md)** · **[Quick start](#quick-start)** · **[Platforms](#platform-support)** · **[MCP](#connect-your-ai-agent)** · **[API](docs/API.md)** · **[Security](SECURITY.md)** · **[Contribution](CONTRIBUTING.md)**
-
-  <img src="docs/assets/dashboard-preview.webp" alt="Human2API local workflow dashboard" width="850" />
+[Quick start](#quick-start) · [Arabic](docs/README_AR.md) · [Architecture](docs/ARCHITECTURE.md) · [Security](SECURITY.md) · [Acceptance](docs/ACCEPTANCE.md)
 </div>
 
----
+> **v0.4.0 integration release, not a production certification.** Core code and browser DOM behavior have local automated tests. Native hardware, Android APK execution and hosted deployment require their own acceptance evidence. GitHub Actions was independently confirmed blocked by an **account billing lock**, not by an executed test failure. See [issue #8](https://github.com/karemfree1282-gif/human2api/issues/8).
 
-> **v0.3 development release.** The browser engine has automated local tests and the other platform engines have mocked unit tests, but physical Windows/macOS/Linux app and Android device acceptance tests are not yet complete. This project is **not** advertised as production-ready, a hosted cloud service, or a universal API for every app.
-
-## The problem
-
-Plenty of software has no public API. Human2API turns an *explicit, inspected workflow* into a reusable local tool. No generated code executes inside workflow definitions. Workflows are human-readable JSON, and write actions require explicit approval (either per-run, or once when the user deliberately creates a recurring local schedule).
-
-```
-Teach a browser / desktop / Android task
-          ↓
-Review & parameterize its JSON actions
-          ↓
-Run with verification and explicit permissions
-          ↓
-CLI  ·  MCP tool  ·  Local REST API
-          ↓
-Share a checksummed .h2a.zip workflow with others
-```
+Human2API turns an explicitly recorded, reviewed workflow into reusable local automation. The core runs without a cloud account or AI model. Optional AI recovery sends bounded interface metadata only with explicit consent. It never executes model-generated code.
 
 ## Quick start
-
-**Browser (Python 3.10+)**
 
 ```bash
 git clone https://github.com/karemfree1282-gif/human2api.git
 cd human2api
-python -m pip install -e .
+python -m pip install -e '.[vault,signing]'
 python -m playwright install chromium
+h2a init
 h2a serve
 ```
 
-Open **http://127.0.0.1:8765**. A local fake-invoice sandbox is served at `/demo`; it never processes payments.
+Open `http://127.0.0.1:8765`. The invoice sandbox at `/demo` uses fake data and never processes payments. Use **Visual editor** to create or reorder actions, define input variables, validate, and save with conflict detection and revision backups.
 
 ```bash
 h2a check create_invoice
+h2a plan create_invoice --data '{"customer_name":"Alex","amount":49.99}'
 h2a run create_invoice --data '{"customer_name":"Alex","amount":49.99}' --approve
 ```
 
-**Desktop (Windows, macOS, Linux)**
+On Windows, use a UTF-8 JSON file with `--data-file inputs.json` to avoid shell quoting differences. Do not put real secrets into shell history.
+
+## What is implemented
+
+| Surface | Functions | Important boundary |
+|---|---|---|
+| Browser | DOM recording, unique selector fallback, tabs, nested stable iframes, assertions, downloads, strict request allowlist | Not every website, inaccessible canvas, or OS dialog is supported |
+| Desktop | Pointer recording/replay, native UIA/AX/AT-SPI selectors, Unicode native text, smart editable placeholders | Needs an approved interactive OS accessibility session; device tests remain required |
+| Android | ADB runner plus consent-based accessibility recording, Unicode text, scoped clicks/scrolling | Companion must be built, installed and explicitly armed on an authorized phone |
+| Studio | Native webview launcher, visual builder, live progress, cancellation, schedules, revision-safe editing | Native packaging is built separately on each OS |
+| Agents | Typed MCP tools, legacy initialization and 2026-07-28 discovery, progress, cancellation | Your MCP client must obtain human approval for writes |
+| Privacy | Encrypted secret vault, redacted results, metadata-only journal, private artifacts, device locks | Not a complete desktop OS sandbox or perfect memory erasure |
+| Sharing | Ed25519 signatures, pinned publisher keys, registry accounts, search, reviews, revocation, upgrades, backup/restore | Admin enrollment is not automatic real-world identity verification |
+| Release | One-command repair/check/build reports, native/Android workflows, draft-only release artifacts | A blocked/skipped gate is never reported as successful |
+
+## Record and reuse
 
 ```bash
-python -m pip install -e '.[desktop]'
-h2a record-desktop --name mouse_demo
-# Windows with stable UI Automation selectors (optional):
-# h2a record-desktop --name smart_demo --smart
-# Perform only the mouse clicks / scrolls you want recorded, then press F12.
-# No keyboard content, passwords or clipboard text is captured.
-h2a check mouse_demo
-h2a run mouse_demo --approve
-```
-
-The desktop recorder captures **pointer actions only**. On Windows, `--smart` attempts to record non-password UIA automation IDs for clicks and falls back to coordinates when IDs are unavailable. It never records typed text. To enter values, edit the generated JSON and add `type_text` with a `{{variable}}` declaration under `inputs`. The current desktop text backend supports **ASCII**, and visible UI coordinates are resolution-dependent. Set mouse to the upper-left corner to activate PyAutoGUI's failsafe. `--show-browser` only applies to the browser target.
-
-**Android (USB or emulator + Android platform-tools)**
-
-1. Enable **USB debugging** on your own/test Android device and authorize the connected computer.
-2. Install Android platform-tools so the `adb` executable is on PATH.
-3. Record guided commands and run a workflow:
-
-```bash
+h2a record https://example.org --name browser_task
+python -m pip install -e '.[desktop,accessibility,studio]'
+h2a record-desktop --name desktop_task --smart
+h2a inspect-desktop --window 'Your exact application window'
 h2a devices
-h2a record-android --name android_demo
-# Commands: tap X Y, tap-text TEXT, input NAME, back, wait MS, assert TEXT, screenshot, done
-h2a check android_demo
-h2a run android_demo --approve
+h2a record-android --name guided_android
+h2a studio
 ```
 
-The Android recorder uses a **guided CLI** rather than passive touch capture. `input NAME` saves a placeholder, not the input value. UI text selectors are built from UIAutomator XML; Android text injection supports only a conservative ASCII subset. Device UI permissions and third-party app restrictions still apply; root is not required.
+Smart desktop capture uses native selectors where possible and inserts placeholders for editable fields. It does **not** capture typed values. Pointer fallback depends on display layout. On Linux, install the distro AT-SPI Python binding and a compatible webview backend; see [platform setup](docs/PLATFORMS.md).
 
-## Platform support
+The Android companion source is in [`android-companion/`](android-companion/README.md). It records supported click/text-change/scroll events only after visible consent; text changes create required variables, not recorded values. Password controls are excluded. Its bridge is loopback-only, scoped to the selected app, and uses a rotating five-minute token with a STOP notification.
 
-| Capability | Browser | Desktop | Android |
-| --- | --- | --- | --- |
-| Record actions | DOM events, tabs, named iframes | Pointer clicks & scroll; Windows UIA inspect | Guided ADB commands |
-| Replay | Playwright | PyAutoGUI (optional) | Android platform-tools |
-| Parameterized text input | Yes | ASCII mouse backend; Unicode through Windows UIA | Restricted ASCII |
-| Visual/UI assertions | DOM text | Reference image (optional OpenCV) | UIAutomator text |
-| Screenshots | Yes | Yes | Yes |
-| MCP / REST / CLI | Yes | Yes | Yes |
-| Automatic failure recovery | Optional semantic + opt-in AI selector suggestions; read-only retries | Read-only UIA verification retries | Android assertion retries |
-| Verified on actual target devices | Chromium DOM tests; network E2E deferred in managed environment | Simulated UIA and mocked GUI tests only | Mocked ADB tests only |
-
-Browser workflows are self-contained JSON. Captured form **values are discarded immediately** and replaced by input variables; URLs with query parameters are scrubbed at capture time. New-tab switching and named/ID-based first-level iframe selectors are supported. Not all browsers, operating system dialogs, canvas apps, or inaccessible desktop UIs work.
-
-## Browser workflow recording
-
-```bash
-h2a record https://example.org --name my_browser_task
-```
-
-Interact in the new Chromium window and select **Stop & save**. The saved workflow contains CSS selectors, fallback selectors, and optional aria-label/role hints. It never stores typed values. Inspect it before running it on anything sensitive.
+## Connect an AI agent
 
 ```json
-{
-  "action": "fill",
-  "selector": "#customer-name",
-  "alternatives": ["input[name=\"customer_name\"]"],
-  "label": "Customer name",
-  "value": "{{customer_name}}"
-}
+{"mcpServers":{"human2api":{"command":"h2a","args":["mcp","--directory","/absolute/path/to/workflows"],"env":{"H2A_ALLOW_WRITE":"0"}}}}
 ```
 
-To make a write run, use `--approve`. A read-only workflow must contain only non-mutating steps. The browser engine blocks top-level/iframe navigation to unapproved hosts but is **not** a complete network sandbox: remote pages can make requests; use separate test profiles and accounts.
+Set `H2A_ALLOW_WRITE=1` only with client-side user approval. Enable `--heal-selectors` for unique semantic recovery and additionally `--ai-heal` for your explicitly configured OpenAI-compatible endpoint. AI suggestions never expand the approved application scope or silently overwrite workflows. Never automatically retry a failed write.
 
-## Opt-in selector healing
-
-When a browser selector no longer resolves, the runner can try **semantic aria labels/roles**. This never persists a change automatically:
+## Protect secrets and run batches
 
 ```bash
-h2a run create_invoice --data '{"customer_name":"Alex","amount":49.99}' --approve --heal-selectors
+h2a vault init --file .h2a/secrets.vault
+h2a vault set account_token --file .h2a/secrets.vault
+h2a run my_workflow --vault .h2a/secrets.vault --secret token=account_token --approve
+h2a batch create_invoice --file inputs.csv --approve
 ```
 
-Optional AI suggestions work through **your explicitly configured OpenAI-compatible endpoint**. They are OFF by default. Enabling them transmits up to 70 **sanitized element metadata records** (IDs, names, roles, aria labels, test IDs) to the endpoint; these may still include identifying data. Form values, cookies and full HTML are not included. Always review suggestions.
+Master passwords and secret values are prompted without echo. Declare a secret input in the workflow before mapping it. Batch input rows are all validated before the first operation; execution stops on failure without silently repeating writes.
+
+## Publish inspectable skills
 
 ```bash
-export H2A_AI_ENDPOINT="https://api.openai.com/v1/chat/completions"
-export H2A_AI_MODEL="gpt-4.1-mini"
-export H2A_AI_API_KEY="<set-in-your-shell-not-in-source>"
-h2a run create_invoice --data-file inputs.json --approve --heal-selectors --ai-heal
+h2a keygen --private publisher.pem --public publisher.pub.pem
+h2a pack create_invoice --output invoice.h2a.zip --publisher my_publisher --sign-key publisher.pem --release-version 1.0.0
+h2a verify invoice.h2a.zip --trust-key publisher.pub.pem
+h2a registry serve
 ```
 
-Only a unique visible element can be used as a recovered selector. AI does not execute scripts and cannot silently modify workflow files. The local dashboard also requires per-run AI-healing consent.
+The included registry is a **real self-hosted service**, not a claim that a public instance is already running. It never executes uploaded workflows. Enrolled account tokens plus pinned package signatures are required to publish. See [registry operations and HTTPS deployment](docs/REGISTRY.md). Keys, vaults and backups must never be committed.
 
-## Connect your AI agent
-
-Use the MCP stdio adapter with any client supporting the MCP tools protocol:
-
-```json
-{
-  "mcpServers": {
-    "human2api": {
-      "command": "h2a",
-      "args": ["mcp", "--directory", "/absolute/path/to/workflows"],
-      "env": {"H2A_ALLOW_WRITE": "0"}
-    }
-  }
-}
-```
-
-One typed `h2a_<workflow>` tool is registered for every local valid workflow. Read-only actions work by default. Write workflows require `H2A_ALLOW_WRITE=1` and consent enforced by **your MCP client**; Human2API does not have an interactive approval dialog inside MCP.
-
-## Share workflows: local catalog and packages
-
-```
-h2a pack create_invoice --output catalog/create_invoice.h2a.zip --publisher community
-h2a catalog --catalog-dir catalog
-h2a verify catalog/create_invoice.h2a.zip
-h2a install catalog/create_invoice.h2a.zip --approve --directory other_workflows
-```
-
-`.h2a.zip` contains exactly a manifest and workflow JSON. Unsigned v1 checksums detect corruption; optional **Ed25519-signed v2 packages** support a pinned publisher public key. A valid signature alone does not establish a trustworthy publisher. Nothing executable gets extracted, and overwrite is disallowed. Always inspect third-party workflows and permitted hosts/actions before installing. The **catalog includes a local installed folder and a public JSON index**, not a hosted account marketplace. Community registry submission instructions are in [marketplace/README.md](marketplace/README.md).
-
-## Local REST API
-
-`h2a serve` exposes only `127.0.0.1`, not the internet. The dashboard uses an ephemeral `X-H2A-Token` API header and checks Host/Origin against DNS rebinding. Runs show step progress and offer cooperative cancellation; two simultaneous executions are allowed, with extra requests receiving HTTP 429. Use `h2a openapi --output openapi.json` or [API documentation](docs/API.md).
-
-## Native Windows UI Automation (stable accessibility selectors)
-
-Unlike screen coordinates, Windows UIA can address a control by its accessible name or automation ID. These actions are optional, and **do not require recording typed keys**. Windows must grant the required application accessibility permissions. On macOS/Linux, use pointer actions for now.
+## Schedules and cancellation
 
 ```bash
-python -m pip install -e '.[accessibility]'
-h2a inspect-desktop --window 'Untitled - Notepad'
+h2a schedule add create_invoice --every-minutes 60 --data-file private-inputs.json --approve
+h2a scheduler
 ```
 
-Example desktop steps (replace window title / ID with your actual output):
+The scheduler remains in the foreground. Recurring writes require explicit enrollment approval. Cancellation is cooperative: an already-issued native/ADB call can finish; neither cancellation nor an error implies rollback.
 
-```json
-{"action":"ui_fill","windowTitle":"Untitled - Notepad","automationId":"15","value":"{{note}}"}
-{"action":"ui_assert_text","windowTitle":"Untitled - Notepad","name":"Editor","text":"{{note}}","retries":2,"retryDelayMs":750}
-```
-
-The Windows UIA `ui_fill` action supports Unicode through the target's ValuePattern, without using clipboard or keystroke logging. Ambiguous/hidden controls fail closed. Password controls are not selectable.
-
-## Local recurring schedules and cancellation
+## One-command release assembly
 
 ```bash
-h2a plan create_invoice --data '{"customer_name":"Alex","amount":25}'
-h2a schedule add create_invoice --every-minutes 60 --approve --data-file /absolute/private/inputs.json
-h2a schedule list
-h2a scheduler               # Foreground worker; stop with Ctrl+C
-h2a schedule remove create_invoice
+python -m pip install -e '.[dev,vault,signing]'
+h2a complete --repair
+# Explicit optional installs/builds:
+h2a complete --repair --bootstrap --native --android
 ```
 
-Scheduled input file values are **never saved in the registry or history**. On POSIX, input JSON files must be readable only by their owner (`chmod 600`). Schedule intervals are 1–10,080 minutes. Nothing runs in the background until the user starts `h2a scheduler` (or configures an OS service). The worker deliberately records no output values. For REST cancellation, use `POST /api/runs/{runId}/cancel` with the dashboard's token. Cancellation is cooperative and may take until the current GUI or ADB operation completes.
+The tool repairs deterministic generated schemas, validates workflow contracts, checks JavaScript/Python, runs the **unfiltered** test suite, builds and installs a fresh wheel, and emits a private machine-readable report. `--local-only` checks only the local component scope. Exit code **2** means failed or blocked evidence, including skipped tests. It does not manufacture code, unlock accounts, grant device permissions, or claim that mock tests are hardware tests.
 
-## Signed community packages
+Native distributions and Android debug APKs have build workflows. Published releases remain **drafts** until their release-gate jobs pass and maintainers review acceptance evidence. Signing/notarization requires owner-managed identities. [Release and acceptance procedure](docs/ACCEPTANCE.md).
 
-```bash
-pip install -e '.[signing]'
-h2a keygen --private ~/h2a-publisher.pem --public ~/h2a-publisher.pub.pem
-chmod 600 ~/h2a-publisher.pem             # POSIX only
-h2a pack create_invoice --publisher 'your-handle' --sign-key ~/h2a-publisher.pem --output create_invoice.h2a.zip
-h2a verify create_invoice.h2a.zip --trust-key ~/h2a-publisher.pub.pem
-h2a install create_invoice.h2a.zip --trust-key ~/h2a-publisher.pub.pem --approve --directory other_workflows
-```
-
-Do not commit private keys. A package can be cryptographically valid while its actions are untrustworthy: review permissions and hosts before approval. Unsigned v1 packages remain supported.
-
-## Examples, tests and release state
-
-- **Browser:** [`workflows/create_invoice.json`](workflows/create_invoice.json) — runnable against the fake invoice sandbox after starting `h2a serve`.
-- **Desktop:** [`workflows/desktop_note.json`](workflows/desktop_note.json) — **illustrative coordinates only**; adjust positions for your own screen and editor before approving.
-- **Android:** [`workflows/android_settings.json`](workflows/android_settings.json) — **illustrative device UI**; adapt displayed text to your phone before approving.
-- Tests: `python -m pip install -e '.[dev]' && python -m pytest -q`
-- Build: `python -m build`
-- Security policy: [SECURITY.md](SECURITY.md); limitations and next features: [ROADMAP](docs/ROADMAP.md).
-
-## License and contribution
-
-Apache-2.0. Contributions and tests on real devices are especially welcome. [Contributing guide](CONTRIBUTING.md) · [Code of conduct](CODE_OF_CONDUCT.md) · [Architecture](docs/ARCHITECTURE.md) · [Issue tracker](https://github.com/karemfree1282-gif/human2api/issues).
-
-**Help validate it: try the sandbox, report a reproducible bug, and contribute hardware acceptance results.**
+Apache 2.0 · [Contributing](CONTRIBUTING.md) · [Security boundaries](SECURITY.md)

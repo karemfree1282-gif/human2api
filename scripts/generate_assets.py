@@ -55,10 +55,10 @@ def og_card():
 
 def dashboard_screenshot():
     static=ROOT/'src'/'human2api'/'static'
-    html=(static/'dashboard.html').read_text().replace('__H2A_LOCAL_TOKEN__','DEMO_ONLY_NO_REAL_TOKEN')
-    css=(static/'app.css').read_text()
-    js=(static/'app.js').read_text()
-    wf=json.loads((ROOT/'workflows'/'create_invoice.json').read_text())
+    html=(static/'dashboard.html').read_text(encoding="utf-8").replace('__H2A_LOCAL_TOKEN__','DEMO_ONLY_NO_REAL_TOKEN')
+    css=(static/'app.css').read_text(encoding="utf-8")
+    js=(static/'app.js').read_text(encoding="utf-8")
+    wf=json.loads((ROOT/'workflows'/'create_invoice.json').read_text(encoding="utf-8"))
     entry={'name':wf['name'],'description':wf['description'],'permissions':wf['permissions'],'inputs':len(wf['inputs']),'steps':len(wf['steps'])}
     fake_fetch='''() => {window.fetch = async (url) => {
       if (url === '/api/workflows') return new Response(JSON.stringify({workflows: window.__fixture.entries}), {status:200,headers:{'Content-Type':'application/json'}});

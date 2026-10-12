@@ -43,7 +43,7 @@ RECORDER_SCRIPT = r"""
     }
     if (route.length) list.push(route.join(' > '));
     return [...new Set(list)].filter((sel) => {
-      try { return document.querySelector(sel) === el; } catch (_) { return false; }
+      try { const matches = document.querySelectorAll(sel); return matches.length === 1 && matches[0] === el; } catch (_) { return false; }
     });
   };
   const emit = (msg) => { try { window.h2aBridge(msg).catch(() => {}); } catch (_) {} };
@@ -119,12 +119,14 @@ def workflow_from_events(name: str, description: str, start_url: str, events: li
     inputs: dict[str, Any] = {}
     fields: dict[str, str] = {}
     steps: list[dict[str, Any]] = []
+    active_tab = 0
     for event in events:
         action = event.get("action")
         if action == "switch_tab":
             index = event.get("index")
             if isinstance(index, int) and not isinstance(index, bool) and 0 <= index <= 20:
                 steps.append({"action": "switch_tab", "index": index})
+                active_tab = index
             continue
         if action not in {"click", "fill", "select", "check"}:
             continue
@@ -135,6 +137,9 @@ def workflow_from_events(name: str, description: str, start_url: str, events: li
         frame = event.get("frame")
         if isinstance(frame, str) and frame:
             step["frame"] = frame[:2048]
+        frames = event.get("frames")
+        if isinstance(frames, list) and frames and all(isinstance(x, str) and x for x in frames):
+            step["frames"] = frames
         for hint in ("label", "role"):
             if isinstance(event.get(hint), str) and 0 < len(event[hint]) < 150:
                 step[hint] = event[hint]
@@ -144,14 +149,15 @@ def workflow_from_events(name: str, description: str, start_url: str, events: li
         if action in {"fill", "select"}:
             field = str(event.get("field") or "field")
             # Reuse the same input when a field is edited twice.
-            if field not in fields:
+            identity = json.dumps([active_tab, step.get("frames", [step.get("frame", "")]), selector, field])
+            if identity not in fields:
                 key = variable_name(field, set(inputs))
-                fields[field] = key
+                fields[identity] = key
                 input_type = str(event.get("inputType", "text"))
                 special = bool(re.search(r"password|token|secret|api.?key|card|cvv|pin|otp|auth", field, re.I))
                 secret = special or input_type in {"password", "tel"}
                 inputs[key] = {"type": "string", "description": f"Value for {field[:90]}", "required": True, "secret": secret}
-            step["value"] = "{{" + fields[field] + "}}"
+            step["value"] = "{{" + fields[identity] + "}}"
             # Neither recorded values nor browser text are ever transferred.
         elif action == "check":
             step["checked"] = bool(event.get("checked"))
@@ -181,6 +187,7 @@ def record(url: str, *, name: str, output_dir: str | Path = "workflows", browser
         raise WorkflowError(f"workflow already exists: {destination}; choose a new name")
     done = Event()
     events: list[dict[str, Any]] = []
+    recording_errors: list[str] = []
     with sync_playwright() as playwright:
         browser = launch_browser(playwright, headless=headless, browser_path=browser_path)
         try:
@@ -204,35 +211,50 @@ def record(url: str, *, name: str, output_dir: str | Path = "workflows", browser
                     events.append({"action": "switch_tab", "index": index})
                     active_tab = index
                 if frame != tab.main_frame:
-                    # Address first-level iframes by a stable id/name; never
-                    # write potentially sensitive iframe URL strings to disk.
-                    if frame.parent_frame != tab.main_frame:
-                        return
                     try:
-                        iframe = frame.frame_element()
-                        id_attr = iframe.get_attribute("id")
-                        name_attr = iframe.get_attribute("name")
-                        if id_attr and re.fullmatch(r"[a-zA-Z0-9_-]{1,100}", id_attr):
-                            payload["frame"] = "iframe[id=" + json.dumps(id_attr) + "]"
-                        elif name_attr and re.fullmatch(r"[a-zA-Z0-9_-]{1,100}", name_attr):
-                            payload["frame"] = "iframe[name=" + json.dumps(name_attr) + "]"
-                        else:
-                            return
+                        chain = []
+                        current = frame
+                        while current != tab.main_frame:
+                            if len(chain) >= 10 or current.parent_frame is None:
+                                raise WorkflowError("iframe depth exceeds supported bound")
+                            iframe = current.frame_element()
+                            selector = None
+                            for attribute in ("id", "name"):
+                                value = iframe.get_attribute(attribute)
+                                if value and re.fullmatch(r"[a-zA-Z0-9_-]{1,100}", value):
+                                    proposed = "iframe[" + attribute + "=" + json.dumps(value) + "]"
+                                    if current.parent_frame.locator(proposed).count() == 1:
+                                        selector = proposed
+                                        break
+                            if selector is None:
+                                raise WorkflowError("iframe requires a unique stable id or name")
+                            chain.insert(0, selector)
+                            current = current.parent_frame
+                        payload["frame" if len(chain) == 1 else "frames"] = chain[0] if len(chain) == 1 else chain
                     except Exception:
+                        recording_errors.append("An iframe action could not be addressed safely; no partial recording was saved")
+                        done.set()
                         return
                 if len(events) < 250:
                     events.append(payload)
+                else:
+                    recording_errors.append("Recording exceeded 250 actions; split it into smaller workflows")
+                    done.set()
             context.expose_binding("h2aBridge", bridge)
             context.add_init_script(script=RECORDER_SCRIPT)
             page.goto(url, wait_until="domcontentloaded", timeout=30000)
             print("Recording: interact with the Chromium window and press Stop & save.")
             while not done.is_set() and any(not p.is_closed() for p in context.pages):
                 try:
-                    page.wait_for_timeout(200)
+                    open_pages = [tab for tab in context.pages if not tab.is_closed()]
+                    if open_pages:
+                        open_pages[0].wait_for_timeout(200)
                 except Exception:
                     break
         finally:
             browser.close()
+    if recording_errors:
+        raise WorkflowError(recording_errors[0])
     description = f"Browser task recorded from {urlsplit(url).hostname}"
     destination = Path(output_dir) / f"{name}.json"
     if destination.exists():
