@@ -1,378 +1,496 @@
-"""Portable, deliberately constrained workflows for browser, desktop and Android.
+"""Data models, schema validation, and backward-compatible migration for Human2API workflows."""
 
-All workflow actions are allowlisted. Files never contain executable Python, shell
-commands, JavaScript or arbitrary MCP tool invocations. Version 1 browser workflows
-remain compatible with the original Human2API alpha.
-"""
 from __future__ import annotations
 
+import copy
 import json
-import math
+import pathlib
 import re
-from pathlib import Path
-from typing import Any
-from urllib.parse import urlparse
+from dataclasses import dataclass, field, asdict
+from typing import Any, Dict, List, Optional, Union
 
-SCHEMA_VERSION = 1
-NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
-PARAM_RE = re.compile(r"{{\s*([a-z][a-z0-9_]*)\s*}}")
-SERIAL_RE = re.compile(r"^[A-Za-z0-9._:-]{1,100}$")
-PACKAGE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+$")
-BROWSER_ACTIONS = frozenset({"click", "fill", "select", "check", "wait", "assert_text", "extract_text", "download", "screenshot", "navigate", "press", "hover", "scroll", "drag", "wait_ms", "switch_tab"})
-DESKTOP_ACTIONS = frozenset({"click", "double_click", "move", "scroll", "type_text", "hotkey", "press", "wait_ms", "screenshot", "assert_image", "ui_click", "ui_fill", "ui_assert_text", "ui_extract_text"})
-ANDROID_ACTIONS = frozenset({"scroll_node", "set_text", "tap", "tap_text", "swipe", "input_text", "keyevent", "wait_ms", "assert_text", "extract_text", "screenshot"})
-ACTIONS = BROWSER_ACTIONS | DESKTOP_ACTIONS | ANDROID_ACTIONS
-TARGET_ACTIONS = {"browser": BROWSER_ACTIONS, "desktop": DESKTOP_ACTIONS, "android": ANDROID_ACTIONS}
-INPUT_TYPES = frozenset({"string", "number", "boolean"})
-MAX_STEPS = 250
-MAX_WORKFLOW_BYTES = 256 * 1024
-WRITE_ACTIONS = frozenset({"scroll_node", "set_text", "ui_click", "ui_fill", "click", "fill", "select", "check", "download", "press", "drag", "double_click", "move", "scroll", "type_text", "hotkey", "tap", "tap_text", "swipe", "input_text", "keyevent"})
+SUPPORTED_SCHEMA_VERSIONS = {"0.1", "0.2", "0.3", "0.4", "0.5", "1.0"}
+CURRENT_SCHEMA_VERSION = "0.5"
 
+SUPPORTED_TARGETS = {
+    "browser",
+    "web",
+    "desktop",
+    "windows-uia",
+    "macos-ax",
+    "linux-atspi",
+    "android",
+    "android-companion",
+}
 
-class WorkflowError(ValueError):
-    """Invalid or unsafe workflow input."""
+SUPPORTED_ACTIONS = {
+    "goto",
+    "navigate",
+    "click",
+    "double_click",
+    "type",
+    "type_text",
+    "fill",
+    "select",
+    "scroll",
+    "wait",
+    "wait_for_selector",
+    "switch_tab",
+    "open_tab",
+    "close_tab",
+    "switch_frame",
+    "upload_file",
+    "download_file",
+    "extract_text",
+    "assert_text",
+    "assert_visible",
+    "assert_url",
+    "assert_value",
+    "focus_window",
+    "resize_window",
+    "press_key",
+    "back",
+    "home",
+    "swipe",
+}
 
+WRITE_CLASS_ACTIONS = {
+    "click",
+    "double_click",
+    "type",
+    "type_text",
+    "fill",
+    "select",
+    "upload_file",
+    "press_key",
+    "swipe",
+}
 
-def _is_http(url: str) -> bool:
-    parsed = urlparse(url)
-    return parsed.scheme in {"http", "https"} and bool(parsed.hostname) and not (parsed.username or parsed.password)
-
-
-def _check_string(value: Any, name: str, *, max_length: int = 2048) -> str:
-    if not isinstance(value, str) or not value or len(value) > max_length:
-        raise WorkflowError(f"{name} must be a nonempty string (up to {max_length} characters)")
-    return value
-
-
-def _safe_filename(name: Any) -> str:
-    name = _check_string(name, "filename", max_length=128)
-    if name in {".", ".."} or name.startswith(".") or name != Path(name).name or "\\" in name or "/" in name or "{{" in name:
-        raise WorkflowError("filename must be a simple basename without template expressions")
-    return name
-
-
-def _validate_value(key: str, value: Any, field_type: str) -> None:
-    if field_type == "string" and (not isinstance(value, str) or len(value) > 10000):
-        raise WorkflowError(f"input {key}: must be a string of at most 10000 characters")
-    if field_type == "number" and (type(value) not in (int, float) or isinstance(value, bool) or (not math.isfinite(value) or abs(value) > 1e15)):
-        raise WorkflowError(f"input {key}: must be a finite number")
-    if field_type == "boolean" and not isinstance(value, bool):
-        raise WorkflowError(f"input {key}: must be boolean")
-
-
-def _int_between(value: Any, name: str, lo: int, hi: int) -> None:
-    if type(value) is not int or not lo <= value <= hi:
-        raise WorkflowError(f"{name} must be an integer between {lo} and {hi}")
-
-
-def validate_workflow(raw: Any) -> dict[str, Any]:
-    if not isinstance(raw, dict):
-        raise WorkflowError("workflow must be a JSON object")
-    if raw.get("schemaVersion") != SCHEMA_VERSION:
-        raise WorkflowError(f"schemaVersion must be {SCHEMA_VERSION}")
-    name = _check_string(raw.get("name"), "name", max_length=63)
-    if not NAME_RE.fullmatch(name):
-        raise WorkflowError("name must match [a-z][a-z0-9_]*")
-    _check_string(raw.get("description"), "description", max_length=300)
-    target = raw.get("target", "browser")
-    if target not in TARGET_ACTIONS:
-        raise WorkflowError("target must be browser, desktop or android")
-    top_fields = {"$schema", "schemaVersion", "name", "description", "target", "startUrl", "permissions", "allowedHosts", "inputs", "steps", "deviceSerial", "appPackage", "networkPolicy", "allowSensitiveArtifacts"}
-    unknown_top = set(raw) - top_fields
-    if unknown_top:
-        raise WorkflowError("unknown workflow fields: " + ", ".join(sorted(unknown_top)))
-    if target == "browser":
-        start_url = _check_string(raw.get("startUrl"), "startUrl", max_length=2048)
-        if not _is_http(start_url):
-            raise WorkflowError("startUrl must be a valid HTTP(S) URL without embedded credentials")
-        if urlparse(start_url).fragment:
-            raise WorkflowError("startUrl cannot contain fragments")
-        allowed_hosts = raw.get("allowedHosts") or [urlparse(start_url).hostname]
-        if not isinstance(allowed_hosts, list) or not allowed_hosts or len(allowed_hosts) > 30:
-            raise WorkflowError("allowedHosts must be a nonempty list of at most 30 hostnames")
-        for host in allowed_hosts:
-            if not isinstance(host, str) or not host or host != host.lower() or any(x in host for x in ["/", "*", ":", "@", " "]):
-                raise WorkflowError("allowedHosts must contain exact lowercase hostnames without ports or wildcards")
-        if urlparse(start_url).hostname not in allowed_hosts:
-            raise WorkflowError("startUrl hostname must be in allowedHosts")
-        if "deviceSerial" in raw or "appPackage" in raw:
-            raise WorkflowError("deviceSerial and appPackage require target android")
-    else:
-        if "startUrl" in raw or "allowedHosts" in raw:
-            raise WorkflowError("startUrl/allowedHosts are only valid for browser workflows")
-        if target == "android":
-            for field, pattern in (("deviceSerial", SERIAL_RE), ("appPackage", PACKAGE_RE)):
-                if field in raw and (not isinstance(raw[field], str) or not pattern.fullmatch(raw[field])):
-                    raise WorkflowError(f"{field} is invalid")
-        elif "deviceSerial" in raw or "appPackage" in raw:
-            raise WorkflowError("deviceSerial and appPackage require target android")
-    if "networkPolicy" in raw and (target != "browser" or raw["networkPolicy"] not in {"navigation", "strict"}):
-        raise WorkflowError("networkPolicy requires browser and must be navigation or strict")
-    if "allowSensitiveArtifacts" in raw and type(raw["allowSensitiveArtifacts"]) is not bool:
-        raise WorkflowError("allowSensitiveArtifacts must be boolean")
-    permission = raw.get("permissions", "write")
-    if permission not in {"read", "write"}:
-        raise WorkflowError("permissions must be 'read' or 'write'")
-    inputs = raw.get("inputs", {})
-    if not isinstance(inputs, dict) or len(inputs) > 80:
-        raise WorkflowError("inputs must be a map with at most 80 fields")
-    for key, spec in inputs.items():
-        if not isinstance(key, str) or not NAME_RE.fullmatch(key) or not isinstance(spec, dict):
-            raise WorkflowError(f"invalid input declaration: {key!r}")
-        if set(spec) - {"type", "required", "secret", "description", "default"}:
-            raise WorkflowError(f"input {key}: unknown fields")
-        if spec.get("type", "string") not in INPUT_TYPES:
-            raise WorkflowError(f"input {key}: unsupported type")
-        if "required" in spec and not isinstance(spec["required"], bool):
-            raise WorkflowError(f"input {key}: required must be boolean")
-        if "secret" in spec and not isinstance(spec["secret"], bool):
-            raise WorkflowError(f"input {key}: secret must be boolean")
-        if "description" in spec and (not isinstance(spec["description"], str) or len(spec["description"]) > 200):
-            raise WorkflowError(f"input {key}: invalid description")
-        if "default" in spec:
-            _validate_value(key, spec["default"], spec.get("type", "string"))
-            if spec.get("secret"):
-                raise WorkflowError(f"input {key}: secret inputs must never have saved defaults")
-    steps = raw.get("steps")
-    if not isinstance(steps, list) or not 1 <= len(steps) <= MAX_STEPS:
-        raise WorkflowError(f"steps must contain 1-{MAX_STEPS} actions")
-    for index, step in enumerate(steps, start=1):
-        if not isinstance(step, dict) or step.get("action") not in TARGET_ACTIONS[target]:
-            raise WorkflowError(f"step {index}: unrecognized action for {target}")
-        action = step["action"]
-        browser_with_selector = {"click", "fill", "select", "check", "wait", "assert_text", "extract_text", "download", "press", "hover", "scroll", "drag"}
-        if target == "browser" and action in browser_with_selector:
-            _check_string(step.get("selector"), f"step {index} selector")
-        if "frames" in step:
-            frames = step["frames"]
-            if "frame" in step or not isinstance(frames, list) or not 1 <= len(frames) <= 10:
-                raise WorkflowError("frames requires 1-10 selectors and cannot be combined with frame")
-            for frame in frames:
-                _check_string(frame, "iframe selector")
-        if target == "browser" and action == "navigate":
-            _check_string(step.get("url"), f"step {index} url")
-        if action in {"fill", "select", "type_text", "input_text", "set_text"}:
-            value = step.get("value")
-            if not isinstance(value, str) or len(value) > 10000:
-                raise WorkflowError(f"step {index} value must be a string of at most 10000 characters")
-        if action == "check" and not isinstance(step.get("checked"), (bool, str)):
-            raise WorkflowError(f"step {index}: checked must be a bool or template string")
-        if action == "assert_text":
-            _check_string(step.get("text"), f"step {index} text")
-        if action in {"extract_text", "ui_extract_text"}:
-            output = _check_string(step.get("as"), f"step {index} as", max_length=63)
-            if not NAME_RE.fullmatch(output):
-                raise WorkflowError(f"step {index}: invalid output name")
-        if action in {"screenshot", "download"} and "filename" in step:
-            _safe_filename(step["filename"])
-        if action in {"ui_click", "ui_fill", "ui_assert_text", "ui_extract_text"}:
-            _check_string(step.get("windowTitle"), f"step {index} windowTitle", max_length=200)
-            if not any(step.get(key) for key in ("automationId", "name")):
-                raise WorkflowError(f"step {index}: UI automation requires an automationId or name")
-            for field in ("automationId", "name", "controlType"):
-                if field in step:
-                    _check_string(step[field], f"step {index} {field}", max_length=200)
-            if action == "ui_fill":
-                if not isinstance(step.get("value"), str) or len(step["value"]) > 10000:
-                    raise WorkflowError(f"step {index}: ui_fill value must be a string")
-            if action == "ui_assert_text":
-                _check_string(step.get("text"), f"step {index} text")
-        if action == "assert_image":
-            _safe_filename(step.get("image"))
-        if action in {"press", "keyevent"}:
-            _check_string(step.get("key"), f"step {index} key", max_length=45)
-        if action == "hotkey":
-            keys = step.get("keys")
-            if not isinstance(keys, list) or not 1 <= len(keys) <= 5 or not all(isinstance(k, str) and re.fullmatch(r"[a-z0-9_]{1,20}", k) for k in keys):
-                raise WorkflowError(f"step {index}: invalid hotkey list")
-        if target == "desktop":
-            if action in {"click", "double_click", "move"}:
-                for dim in ("x", "y"):
-                    _int_between(step.get(dim), f"step {index} {dim}", 0, 16384)
-            if action == "scroll":
-                _int_between(step.get("delta"), f"step {index} delta", -100, 100)
-        if target == "android":
-            if action in {"tap", "swipe"}:
-                for dim in ("x", "y"):
-                    _int_between(step.get(dim), f"step {index} {dim}", 0, 16384)
-            if action == "swipe":
-                for dim in ("x2", "y2"):
-                    _int_between(step.get(dim), f"step {index} {dim}", 0, 16384)
-            if action in {"tap_text", "extract_text", "set_text", "scroll_node"}:
-                _check_string(step.get("selector"), f"step {index} selector", max_length=300)
-        if action == "set_text" and not raw.get("appPackage"):
-            raise WorkflowError("Android set_text requires appPackage for explicit companion scope")
-        from .contracts import action_contract
-        allowed, required = action_contract(target, action)
-        if required - set(step):
-            raise WorkflowError(f"step {index}: missing required fields {', '.join(sorted(required-set(step)))}")
-        unknown = set(step) - allowed
-        if unknown:
-            if "retries" in unknown:
-                raise WorkflowError(f"step {index}: retries are permitted only for read-only assertions and extraction")
-            raise WorkflowError(f"step {index}: unknown fields {', '.join(sorted(unknown))}")
-        if action in {"set_text", "scroll_node"}:
-            if not raw.get("appPackage"):
-                raise WorkflowError("Android companion actions require appPackage")
-            if step.get("by", "resource-id") not in {"resource-id", "content-desc"}:
-                raise WorkflowError("companion selectors require resource-id or content-desc")
-        if action == "scroll_node" and step.get("direction") not in {"forward", "backward"}:
-            raise WorkflowError("scroll_node direction must be forward or backward")
-        if "alternatives" in step and (not isinstance(step["alternatives"], list) or len(step["alternatives"]) > 8 or not all(isinstance(s, str) and 0 < len(s) < 2048 for s in step["alternatives"])):
-            raise WorkflowError(f"step {index}: alternatives must be a small array of selectors")
-        if "retries" in step:
-            _int_between(step["retries"], f"step {index} retries", 0, 3)
-            if action not in {"wait", "assert_text", "extract_text", "assert_image", "ui_assert_text", "ui_extract_text"}:
-                raise WorkflowError(f"step {index}: retries are permitted only for read-only assertions and extraction")
-        if "retryDelayMs" in step:
-            _int_between(step["retryDelayMs"], f"step {index} retryDelayMs", 100, 10000)
-            if "retries" not in step:
-                raise WorkflowError(f"step {index}: retryDelayMs requires retries")
-        if "timeoutMs" in step:
-            _int_between(step["timeoutMs"], f"step {index} timeoutMs", 100, 120000)
-        if "durationMs" in step:
-            _int_between(step["durationMs"], f"step {index} durationMs", 100, 120000)
-        if "index" in step:
-            _int_between(step["index"], f"step {index} index", 0, 20)
-        if "delta" in step and target == "browser":
-            _int_between(step["delta"], f"step {index} delta", -100, 100)
-        if "targetSelector" in step:
-            _check_string(step["targetSelector"], f"step {index} targetSelector")
-        if "frame" in step and target != "browser":
-            raise WorkflowError(f"step {index}: frame selectors are browser-only")
-        if "frame" in step:
-            _check_string(step["frame"], f"step {index} frame", max_length=2048)
-        if "by" in step and step["by"] not in {"text", "resource-id", "content-desc"}:
-            raise WorkflowError(f"step {index}: invalid Android selector kind")
-        for field in ("role", "label", "textHint"):
-            if field in step:
-                _check_string(step[field], f"step {index} {field}", max_length=150)
-    referenced: set[str] = set()
-    for step in steps:
-        for value in step.values():
-            if isinstance(value, str):
-                referenced.update(PARAM_RE.findall(value))
-    missing = referenced - inputs.keys()
-    if missing:
-        raise WorkflowError("undeclared template inputs: " + ", ".join(sorted(missing)))
-    if permission == "read" and any(s["action"] in WRITE_ACTIONS for s in steps):
-        raise WorkflowError("read-only workflow cannot include write actions")
-    return raw
+SECRET_REF_PATTERN = re.compile(r"\$\{\s*(secret|input)\s*:\s*([a-zA-Z0-9_.-]+)\s*\}")
+LEGACY_VAR_PATTERN = re.compile(r"\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}")
 
 
-def validate_inputs(workflow: dict[str, Any], provided: dict[str, Any]) -> dict[str, Any]:
-    if not isinstance(provided, dict):
-        raise WorkflowError("workflow arguments must be a JSON object")
-    specs = workflow.get("inputs", {})
-    unknown = set(provided) - set(specs)
-    if unknown:
-        raise WorkflowError("unknown input(s): " + ", ".join(sorted(unknown)))
-    clean: dict[str, Any] = {}
-    for key, spec in specs.items():
-        if key in provided:
-            value = provided[key]
-        elif "default" in spec:
-            value = spec["default"]
-        elif spec.get("required", True):
-            raise WorkflowError(f"required input missing: {key}")
-        else:
-            continue
-        _validate_value(key, value, spec.get("type", "string"))
-        clean[key] = value
-    return clean
+@dataclass
+class SelectorCandidate:
+    strategy: str
+    value: str
+    role: Optional[str] = None
+    name: Optional[str] = None
+    confidence: float = 0.9
+
+    def to_dict(self) -> Dict[str, Any]:
+        out: Dict[str, Any] = {"strategy": self.strategy, "value": self.value}
+        if self.role:
+            out["role"] = self.role
+        if self.name:
+            out["name"] = self.name
+        if self.confidence is not None:
+            out["confidence"] = round(float(self.confidence), 4)
+        return out
+
+    @classmethod
+    def from_raw(cls, raw: Union[str, Dict[str, Any], "SelectorCandidate"]) -> "SelectorCandidate":
+        if isinstance(raw, SelectorCandidate):
+            return raw
+        if isinstance(raw, str):
+            strategy = "xpath" if raw.startswith("//") or raw.startswith("(//") else "css"
+            return cls(strategy=strategy, value=raw)
+        if isinstance(raw, dict):
+            return cls(
+                strategy=str(raw.get("strategy", "css")),
+                value=str(raw.get("value", "")),
+                role=raw.get("role"),
+                name=raw.get("name"),
+                confidence=float(raw.get("confidence", 0.9)),
+            )
+        raise ValueError(f"Invalid selector candidate: {raw!r}")
 
 
-def template(value: str, inputs: dict[str, Any]) -> str:
-    def substitute(match: re.Match[str]) -> str:
-        key = match.group(1)
-        if key not in inputs:
-            raise WorkflowError(f"template input not supplied: {key}")
-        value = inputs[key]
-        if isinstance(value, bool):
-            return "true" if value else "false"
-        return str(value)
-    return PARAM_RE.sub(substitute, value)
+@dataclass
+class InputSpec:
+    type: str = "string"
+    description: str = ""
+    required: bool = True
+    sensitive: bool = False
+    default: Any = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        out: Dict[str, Any] = {
+            "type": self.type,
+            "required": self.required,
+            "sensitive": self.sensitive or self.type == "secret",
+        }
+        if self.description:
+            out["description"] = self.description
+        if self.default is not None and not out["sensitive"]:
+            out["default"] = self.default
+        return out
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "InputSpec":
+        t = str(data.get("type", "string"))
+        sensitive = bool(data.get("sensitive", False) or t == "secret")
+        return cls(
+            type=t,
+            description=str(data.get("description", "")),
+            required=bool(data.get("required", True)),
+            sensitive=sensitive,
+            default=None if sensitive else data.get("default"),
+        )
 
 
-def load_workflow(path: Path | str) -> dict[str, Any]:
-    path = Path(path)
-    if path.is_symlink():
-        raise WorkflowError("refusing to load a symlink workflow")
-    if path.stat().st_size > MAX_WORKFLOW_BYTES:
-        raise WorkflowError("workflow JSON exceeds size limit")
-    try:
-        return validate_workflow(json.loads(path.read_text(encoding="utf-8")))
-    except json.JSONDecodeError as exc:
-        raise WorkflowError(f"invalid JSON: {exc}") from exc
+@dataclass
+class AssertionSpec:
+    type: str
+    selector: Optional[str] = None
+    expected: Any = None
+    match: str = "contains"
+    timeoutMs: int = 5000
+
+    def to_dict(self) -> Dict[str, Any]:
+        out: Dict[str, Any] = {
+            "type": self.type,
+            "match": self.match,
+            "timeoutMs": self.timeoutMs,
+        }
+        if self.selector is not None:
+            out["selector"] = self.selector
+        if self.expected is not None:
+            out["expected"] = self.expected
+        return out
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "AssertionSpec":
+        return cls(
+            type=str(data["type"]),
+            selector=data.get("selector"),
+            expected=data.get("expected"),
+            match=str(data.get("match", "contains")),
+            timeoutMs=int(data.get("timeoutMs", 5000)),
+        )
 
 
-def save_workflow(path: Path | str, workflow: dict[str, Any]) -> Path:
-    validate_workflow(workflow)
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.is_symlink():
-        raise WorkflowError("refusing to overwrite a symlink")
-    payload = json.dumps(workflow, indent=2, ensure_ascii=False) + "\n"
-    if len(payload.encode("utf-8")) > MAX_WORKFLOW_BYTES:
-        raise WorkflowError("workflow JSON exceeds size limit")
-    import os
-    import tempfile
-    fd, temp_name = tempfile.mkstemp(prefix=".h2a-", suffix=".tmp", dir=path.parent)
-    temp = Path(temp_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            stream.write(payload)
-            stream.flush()
-            os.fsync(stream.fileno())
-        temp.replace(path)
-    finally:
-        temp.unlink(missing_ok=True)
-    return path
+@dataclass
+class HealingConfig:
+    enabled: bool = True
+    maxTier: int = 3
+    aiConsent: bool = False
+    aiProvider: str = "none"
+    minSemanticConfidence: float = 0.72
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "maxTier": self.maxTier,
+            "aiConsent": self.aiConsent,
+            "aiProvider": self.aiProvider,
+            "minSemanticConfidence": self.minSemanticConfidence,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Optional[Dict[str, Any]]) -> "HealingConfig":
+        if not data:
+            return cls()
+        return cls(
+            enabled=bool(data.get("enabled", True)),
+            maxTier=int(data.get("maxTier", 3)),
+            aiConsent=bool(data.get("aiConsent", False)),
+            aiProvider=str(data.get("aiProvider", "none")),
+            minSemanticConfidence=float(data.get("minSemanticConfidence", 0.72)),
+        )
 
 
-def list_workflows(directory: Path | str) -> list[dict[str, Any]]:
-    directory = Path(directory)
-    if not directory.exists():
-        return []
-    found = []
-    for file in sorted(directory.glob("*.json")):
-        if file.is_symlink():
-            continue
-        try:
-            data = load_workflow(file)
-            found.append({"name": data["name"], "description": data["description"], "target": data.get("target", "browser"), "permissions": data.get("permissions", "write"), "inputs": len(data.get("inputs", {})), "steps": len(data["steps"]), "file": str(file)})
-        except (WorkflowError, ValueError, OSError):
-            continue
-    return found
+@dataclass
+class WorkflowStep:
+    action: str
+    id: Optional[str] = None
+    selector: Optional[str] = None
+    fallbackSelectors: List[Union[str, SelectorCandidate]] = field(default_factory=list)
+    url: Optional[str] = None
+    text: Optional[str] = None
+    value: Any = None
+    variable: Optional[str] = None
+    sensitive: bool = False
+    idempotent: bool = True
+    isWriteAction: bool = False
+    framePath: List[str] = field(default_factory=list)
+    tabIndex: Optional[int] = None
+    tabTitle: Optional[str] = None
+    filePath: Optional[str] = None
+    downloadName: Optional[str] = None
+    role: Optional[str] = None
+    name: Optional[str] = None
+    automationId: Optional[str] = None
+    windowTitle: Optional[str] = None
+    packageName: Optional[str] = None
+    resourceId: Optional[str] = None
+    contentDesc: Optional[str] = None
+    x: Optional[float] = None
+    y: Optional[float] = None
+    deltaX: float = 0
+    deltaY: float = 300
+    timeoutMs: int = 10000
+    retries: int = 0
+    retryDelayMs: int = 250
+    expected: Any = None
+    match: str = "contains"
+
+    def normalized_fallbacks(self) -> List[SelectorCandidate]:
+        return [SelectorCandidate.from_raw(item) for item in self.fallbackSelectors]
+
+    def to_dict(self) -> Dict[str, Any]:
+        out: Dict[str, Any] = {"action": self.action}
+        for key in (
+            "id",
+            "selector",
+            "url",
+            "text",
+            "value",
+            "variable",
+            "tabIndex",
+            "tabTitle",
+            "filePath",
+            "downloadName",
+            "role",
+            "name",
+            "automationId",
+            "windowTitle",
+            "packageName",
+            "resourceId",
+            "contentDesc",
+            "x",
+            "y",
+            "expected",
+        ):
+            val = getattr(self, key)
+            if val is not None:
+                out[key] = val
+        if self.fallbackSelectors:
+            out["fallbackSelectors"] = [
+                item.to_dict() if isinstance(item, SelectorCandidate) else item
+                for item in self.fallbackSelectors
+            ]
+        if self.framePath:
+            out["framePath"] = list(self.framePath)
+        if self.sensitive:
+            out["sensitive"] = True
+        if not self.idempotent:
+            out["idempotent"] = False
+        if self.isWriteAction:
+            out["isWriteAction"] = True
+        if self.action == "scroll":
+            out["deltaX"] = self.deltaX
+            out["deltaY"] = self.deltaY
+        if self.timeoutMs != 10000:
+            out["timeoutMs"] = self.timeoutMs
+        if self.retries > 0:
+            out["retries"] = self.retries
+            out["retryDelayMs"] = self.retryDelayMs
+        if self.expected is not None:
+            out["match"] = self.match
+        return out
+
+    @classmethod
+    def from_dict(cls, raw: Dict[str, Any], index: int = 0) -> "WorkflowStep":
+        data = copy.deepcopy(raw)
+        action = str(data.get("action") or data.get("type") or "").strip()
+        if action == "input":
+            action = "type"
+        if action not in SUPPORTED_ACTIONS:
+            raise ValueError(f"Unsupported step action at index {index}: {action!r}")
+
+        is_write = bool(data.get("isWriteAction", False))
+        idempotent = bool(data.get("idempotent", True))
+        if action in ("type", "type_text", "fill", "upload_file"):
+            # Typing/uploading into forms or submitting buttons can mutate state
+            if "isWriteAction" not in data and data.get("submit"):
+                is_write = True
+                idempotent = False
+
+        fallbacks_raw = data.get("fallbackSelectors") or data.get("fallbacks") or []
+        fallbacks: List[Union[str, SelectorCandidate]] = []
+        for f in fallbacks_raw:
+            if isinstance(f, dict):
+                fallbacks.append(SelectorCandidate.from_raw(f))
+            elif isinstance(f, str):
+                fallbacks.append(f)
+
+        text_val = data.get("text")
+        if isinstance(text_val, str):
+            # Migrate legacy {{VAR}} to ${input:VAR}
+            text_val = LEGACY_VAR_PATTERN.sub(r"${input:\1}", text_val)
+
+        return cls(
+            action=action,
+            id=data.get("id") or f"step_{index + 1}",
+            selector=data.get("selector"),
+            fallbackSelectors=fallbacks,
+            url=data.get("url"),
+            text=text_val,
+            value=data.get("value"),
+            variable=data.get("variable"),
+            sensitive=bool(data.get("sensitive", False)),
+            idempotent=idempotent,
+            isWriteAction=is_write,
+            framePath=list(data.get("framePath") or []),
+            tabIndex=data.get("tabIndex"),
+            tabTitle=data.get("tabTitle"),
+            filePath=data.get("filePath"),
+            downloadName=data.get("downloadName"),
+            role=data.get("role"),
+            name=data.get("name"),
+            automationId=data.get("automationId") or data.get("element_id"),
+            windowTitle=data.get("windowTitle"),
+            packageName=data.get("packageName"),
+            resourceId=data.get("resourceId"),
+            contentDesc=data.get("contentDesc"),
+            x=data.get("x"),
+            y=data.get("y"),
+            deltaX=float(data.get("deltaX", 0)),
+            deltaY=float(data.get("deltaY", 300)),
+            timeoutMs=int(data.get("timeoutMs", 10000)),
+            retries=int(data.get("retries", 0)),
+            retryDelayMs=int(data.get("retryDelayMs", 250)),
+            expected=data.get("expected"),
+            match=str(data.get("match", "contains")),
+        )
 
 
-def workflow_file(directory: Path | str, name: str) -> Path:
-    if not NAME_RE.fullmatch(name):
-        raise WorkflowError("invalid workflow name")
-    return Path(directory) / (name + ".json")
+@dataclass
+class Workflow:
+    name: str
+    target: str
+    steps: List[WorkflowStep]
+    schemaVersion: str = CURRENT_SCHEMA_VERSION
+    id: Optional[str] = None
+    description: str = ""
+    version: str = "1.0.0"
+    mode: str = "read"
+    allowedHosts: List[str] = field(default_factory=list)
+    allowedApps: List[str] = field(default_factory=list)
+    allowedPackages: List[str] = field(default_factory=list)
+    networkPolicy: str = "strict"
+    inputs: Dict[str, InputSpec] = field(default_factory=dict)
+    assertions: List[AssertionSpec] = field(default_factory=list)
+    healing: HealingConfig = field(default_factory=HealingConfig)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        self.validate()
+
+    def validate(self) -> None:
+        if not self.name or not self.name.strip():
+            raise ValueError("Workflow 'name' cannot be empty.")
+        if self.target not in SUPPORTED_TARGETS:
+            raise ValueError(f"Unsupported workflow target: {self.target!r}")
+        if self.schemaVersion not in SUPPORTED_SCHEMA_VERSIONS:
+            raise ValueError(f"Unsupported schemaVersion: {self.schemaVersion!r}")
+        if not self.steps:
+            raise ValueError("Workflow must contain at least one step.")
+        if self.networkPolicy not in ("strict", "navigation-only", "open"):
+            raise ValueError(f"Invalid networkPolicy: {self.networkPolicy!r}")
+        if self.mode not in ("read", "write"):
+            raise ValueError(f"Invalid mode: {self.mode!r}")
+
+    def requires_write_approval(self) -> bool:
+        if self.mode == "write":
+            return True
+        return any(step.isWriteAction or not step.idempotent for step in self.steps)
+
+    def to_dict(self) -> Dict[str, Any]:
+        out: Dict[str, Any] = {
+            "schemaVersion": self.schemaVersion,
+            "name": self.name,
+            "version": self.version,
+            "target": self.target,
+            "mode": self.mode,
+            "networkPolicy": self.networkPolicy,
+            "allowedHosts": list(self.allowedHosts),
+            "allowedApps": list(self.allowedApps),
+            "allowedPackages": list(self.allowedPackages),
+            "inputs": {k: v.to_dict() for k, v in self.inputs.items()},
+            "steps": [s.to_dict() for s in self.steps],
+            "assertions": [a.to_dict() for a in self.assertions],
+            "healing": self.healing.to_dict(),
+        }
+        if self.id:
+            out["id"] = self.id
+        if self.description:
+            out["description"] = self.description
+        if self.metadata:
+            out["metadata"] = dict(self.metadata)
+        return out
+
+    def to_json(self, indent: int = 2) -> str:
+        return json.dumps(self.to_dict(), ensure_ascii=False, indent=indent)
+
+    @classmethod
+    def from_dict(cls, raw: Dict[str, Any], migrate: bool = True) -> "Workflow":
+        if not isinstance(raw, dict):
+            raise ValueError("Workflow definition must be a JSON object.")
+        data = migrate_workflow_dict(raw) if migrate else copy.deepcopy(raw)
+        inputs = {
+            k: InputSpec.from_dict(v) if isinstance(v, dict) else InputSpec(type=str(v))
+            for k, v in (data.get("inputs") or {}).items()
+        }
+        steps = [
+            s if isinstance(s, WorkflowStep) else WorkflowStep.from_dict(s, idx)
+            for idx, s in enumerate(data.get("steps") or [])
+        ]
+        assertions = [
+            a if isinstance(a, AssertionSpec) else AssertionSpec.from_dict(a)
+            for a in (data.get("assertions") or [])
+        ]
+        return cls(
+            schemaVersion=str(data.get("schemaVersion", CURRENT_SCHEMA_VERSION)),
+            id=data.get("id"),
+            name=str(data.get("name", "")).strip(),
+            description=str(data.get("description", "")),
+            version=str(data.get("version", "1.0.0")),
+            target=str(data.get("target", "browser")),
+            mode=str(data.get("mode", "read")),
+            allowedHosts=list(data.get("allowedHosts") or []),
+            allowedApps=list(data.get("allowedApps") or []),
+            allowedPackages=list(data.get("allowedPackages") or []),
+            networkPolicy=str(data.get("networkPolicy", "strict")),
+            inputs=inputs,
+            steps=steps,
+            assertions=assertions,
+            healing=HealingConfig.from_dict(data.get("healing")),
+            metadata=dict(data.get("metadata") or {}),
+        )
+
+    @classmethod
+    def load(cls, path: Union[str, pathlib.Path]) -> "Workflow":
+        p = pathlib.Path(path)
+        raw = json.loads(p.read_text(encoding="utf-8"))
+        return cls.from_dict(raw)
+
+    def save(self, path: Union[str, pathlib.Path]) -> pathlib.Path:
+        p = pathlib.Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(self.to_json(indent=2) + "\n", encoding="utf-8")
+        return p
 
 
-def secret_redact(message: str, workflow: dict[str, Any], inputs: dict[str, Any]) -> str:
-    for key, spec in workflow.get("inputs", {}).items():
-        if spec.get("secret") and key in inputs:
-            value = str(inputs[key])
-            if value:
-                message = message.replace(value, "[REDACTED]")
-    return message[:600]
-
-
-def input_json_schema(workflow: dict[str, Any]) -> dict[str, Any]:
-    properties = {}
-    required = []
-    for key, spec in workflow.get("inputs", {}).items():
-        props: dict[str, Any] = {"type": spec.get("type", "string")}
-        if "description" in spec:
-            props["description"] = spec["description"]
-        if "default" in spec:
-            props["default"] = spec["default"]
-        if spec.get("secret"):
-            props["writeOnly"] = True
-        properties[key] = props
-        if spec.get("required", True) and "default" not in spec:
-            required.append(key)
-    return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
+def migrate_workflow_dict(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """Safely migrate legacy workflow dictionaries (v0.1 - v0.4) to v0.5 without losing fields."""
+    data = copy.deepcopy(raw)
+    ver = str(data.get("schemaVersion", "0.3"))
+    if ver not in SUPPORTED_SCHEMA_VERSIONS:
+        raise ValueError(f"Unsupported workflow schemaVersion: {ver!r}")
+    data.setdefault("schemaVersion", CURRENT_SCHEMA_VERSION)
+    if "platform" in data and "target" not in data:
+        data["target"] = data.pop("platform")
+    data.setdefault("target", "browser")
+    data.setdefault("version", "1.0.0")
+    data.setdefault("mode", "write" if data.get("requiresWrite") else "read")
+    data.pop("requiresWrite", None)
+    data.setdefault("networkPolicy", "strict")
+    data.setdefault("allowedHosts", [])
+    data.setdefault("allowedApps", [])
+    data.setdefault("allowedPackages", [])
+    data.setdefault("inputs", {})
+    data.setdefault("assertions", [])
+    data.setdefault("healing", {"enabled": True, "maxTier": 3, "aiConsent": False, "aiProvider": "none"})
+    return data

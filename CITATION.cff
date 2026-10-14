@@ -1,9 +1,10 @@
 cff-version: 1.2.0
 title: Human2API
-message: "If you use Human2API in research or a product, please cite the project."
+message: "If you use Human2API in your research or software, please cite it using this metadata."
 type: software
-version: 0.1.0
-date-released: 2026-10-11
+authors:
+  - name: "Human2API Contributors"
+repository-code: "https://github.com/karemfree1282-gif/human2api"
 license: Apache-2.0
-repository-code: https://github.com/karemfree1282-gif/human2api
-abstract: "Record a browser task once and turn it into a repeatable CLI, REST API or MCP tool."
+version: 0.5.0
+date-released: "2026-10-14"

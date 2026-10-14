@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "0.5",
+  "name": "GitHub Repository Inspection Demo",
+  "description": "Read-only browser workflow inspecting a repository page.",
+  "version": "1.0.0",
+  "target": "browser",
+  "mode": "read",
+  "networkPolicy": "strict",
+  "allowedHosts": [
+    "127.0.0.1",
+    "127.0.0.2"
+  ],
+  "inputs": {},
+  "steps": [
+    {
+      "id": "step_1",
+      "action": "goto",
+      "url": "http://127.0.0.2:8000/demo"
+    },
+    {
+      "id": "step_2",
+      "action": "assert_visible",
+      "selector": "#demo-heading",
+      "expected": true
+    }
+  ],
+  "assertions": []
+}

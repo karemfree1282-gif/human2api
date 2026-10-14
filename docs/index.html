@@ -1,53 +1,29 @@
-<!doctype html>
-<html lang="en">
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="color-scheme" content="dark">
-  <title>Human2API — Teach it once. Verify every run.</title>
-  <meta name="description" content="Convert supported browser, desktop, and Android tasks into inspectable local MCP tools, REST APIs, and CLI automations. Experimental developer preview.">
-  <meta name="keywords" content="human2api, browser automation, desktop automation, Android ADB, MCP tools, AI agents, local-first, Playwright, PyAutoGUI">
-  <meta name="robots" content="index,follow">
-  <link rel="canonical" href="https://karemfree1282-gif.github.io/human2api/">
-  <link rel="icon" type="image/svg+xml" href="assets/logo.svg">
-  <meta property="og:type" content="website">
-  <meta property="og:title" content="Human2API — Teach it once. Verify every run.">
-  <meta property="og:description" content="Automate supported browser, desktop and Android tasks with verified local MCP and REST workflows. Open-source developer preview.">
-  <meta property="og:url" content="https://karemfree1282-gif.github.io/human2api/">
-  <meta property="og:image" content="https://karemfree1282-gif.github.io/human2api/assets/og-card.png">
-  <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Human2API — Turn UI tasks into MCP and API tools">
-  <meta name="twitter:description" content="Record once. Inspect. Reuse with MCP, REST and CLI.">
-  <meta name="twitter:image" content="https://karemfree1282-gif.github.io/human2api/assets/og-card.png">
-  <link rel="stylesheet" href="site.css">
-  <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Human2API","applicationCategory":"DeveloperApplication","operatingSystem":"Windows, Linux, macOS","softwareVersion":"0.4.0","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"codeRepository":"https://github.com/karemfree1282-gif/human2api","license":"https://www.apache.org/licenses/LICENSE-2.0"}</script>
-  <script src="site.js" defer></script>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Human2API v0.5.0 — وثائق المنصة الرسمية</title>
+  <link rel="stylesheet" href="site.css" />
 </head>
 <body>
-<div class="noise"></div><div class="glow-bg"></div>
-<header class="site-header"><div class="container nav-inner"><a class="logo" href="#top"><img src="assets/logo.svg" width="40" height="40" alt="Human2API logo"> human<span>2</span>api</a><nav aria-label="Main navigation"><a href="#how">How it works</a><a href="#features">Features</a><a href="#quickstart">Get started</a><a href="https://github.com/karemfree1282-gif/human2api" class="nav-github" target="_blank" rel="noopener noreferrer">GitHub ↗</a></nav></div></header>
-<main id="top">
-  <section class="hero container"><div class="hero-badge"><i></i> OPEN SOURCE · LOCAL FIRST · v0.4 INTEGRATION</div><h1>Teach it once.<br><span>Verify every run.</span></h1><p class="hero-lede">Teach browser, desktop or Android workflows, then turn them into inspectable CLI, MCP and local REST tools. A practical, experimental developer preview — no locked-in cloud.</p><div class="actions"><a href="#quickstart" class="btn primary">Start building <span>↗</span></a><a href="https://github.com/karemfree1282-gif/human2api" class="btn secondary" target="_blank" rel="noopener noreferrer"><span>☆</span> View on GitHub</a></div><div class="hero-facts"><span><b>0</b> cloud accounts</span><span><b>0</b> typed values stored</span><span><b>3</b> automation targets</span></div></section>
-  <section class="image-shell container"><div class="window"><div class="window-top"><div class="dots"><i></i><i></i><i></i></div><span>Human2API — Automation Studio</span><span class="healthy">● ENGINE READY</span></div><img src="assets/dashboard-preview.webp" alt="Actual Human2API local dashboard, with example invoice workflow and control panel" loading="eager"></div><div class="image-caption">Real local dashboard. Inspectable local workflows; hardware acceptance is tracked separately.</div></section>
-  <section class="how container" id="how"><div class="section-intro"><span class="mini">THE WORKFLOW</span><h2>From human action<br>to machine superpower.</h2><p>Unlike a black-box autonomous agent, every step is inspectable and repeatable.</p></div><div class="steps"><article><div class="num">01</div><div class="step-icon">◉</div><h3>Teach the task</h3><p>Record browser actions, inspect native desktop controls, or use the consent-scoped Android companion.</p></article><article><div class="num">02</div><div class="step-icon">{ }</div><h3>Inspect & verify</h3><p>Use the visual editor or inspect JSON. Add typed variables, explicit permissions, assertions and reviewed recovery.</p></article><article><div class="num">03</div><div class="step-icon">⌁</div><h3>Use it anywhere</h3><p>Call from your terminal, connect MCP-compatible agents, or use the local REST API.</p></article></div></section>
-  <section class="features-section" id="features"><div class="container"><div class="section-intro"><span class="mini">THE TOOLKIT</span><h2>Powerful by design.<br><em>Inspectable by default.</em></h2></div><div class="features"><div class="feature wide"><span class="feature-kicker">A WORKFLOW IS JUST JSON</span><h3>Automation you can actually understand.</h3><p>We don't keep the workflow in a closed cloud. Save a portable JSON file, review every click, and share only what you want.</p><pre><span class="dim">// Workflow action</span>
-{
-  <span class="accent">"action"</span>: "fill",
-  <span class="accent">"selector"</span>: "#customer-name",
-  <span class="accent">"value"</span>: "{{customer_name}}"
-}</pre></div><div class="feature"><span class="feature-icon">◇</span><h3>Privacy by design</h3><p>Recording discards typed input values. Operate on your own machine without an account or telemetry.</p></div><div class="feature"><span class="feature-icon">⛨</span><h3>Explicit permissions</h3><p>Write-capable workflows require approval, and allowed hosts are declared and checked.</p></div><div class="feature"><span class="feature-icon">↬</span><h3>Selector fallbacks</h3><p>CSS fallbacks plus optional semantic selector recovery. AI recovery needs explicit per-run consent.</p></div><div class="feature"><span class="feature-icon">✳</span><h3>Agent independent</h3><p>Standard MCP and REST interfaces. Bring your favorite compatible agent instead of choosing ours.</p></div></div></div></section>
-  <section class="quickstart container" id="quickstart"><div><span class="mini">FROM ZERO TO RUNNING</span><h2>Ready before<br>your coffee is.</h2><p>Start in the browser with Python 3.10+. The visual editor is included. Native Studio and the Android companion have their own platform dependencies.</p><a class="text-link" href="https://github.com/karemfree1282-gif/human2api#quick-start" target="_blank" rel="noopener noreferrer">Current installation and acceptance guide ↗</a></div><div class="command"><div class="command-top"><span class="dots"><i></i><i></i><i></i></span><span>Terminal</span><button id="copy-command" type="button">Copy commands ↗</button></div><pre id="commands"><span class="comment"># Clone and install</span>
-git clone https://github.com/karemfree1282-gif/human2api.git
-cd human2api
-python -m pip install -e .
-python -m playwright install chromium
-
-<span class="comment"># Launch the studio</span>
-h2a init
-h2a serve
-
-<span class="comment"># Inspect release gates, never assume completion</span>
-h2a complete --repair</pre></div></section>
-  <section class="final-cta container"><div class="orb"></div><span class="mini">MAKE YOUR NEXT IDEA AUTOMATABLE</span><h2>Built for humans.<br><span>Ready for agents.</span></h2><p>Star the project, report a bug, or contribute a feature. Every contribution makes the tools more useful for everyone.</p><a href="https://github.com/karemfree1282-gif/human2api" class="btn primary" target="_blank" rel="noopener noreferrer">Explore on GitHub ↗</a></section>
-</main><footer><div class="container foot"><a class="logo" href="#top"><img src="assets/logo.svg" alt="" width="33" height="33">human<span>2</span>api</a><span>Apache-2.0 · v0.4 integration · No tracking</span><a href="https://github.com/karemfree1282-gif/human2api/blob/main/SECURITY.md" target="_blank" rel="noopener noreferrer">Security ↗</a></div></footer>
-</body></html>
+  <header>
+    <img src="assets/logo.svg" alt="Human2API Logo" width="64" />
+    <h1>Human2API v0.5.0</h1>
+    <p>علّم المتصفح أو الكمبيوتر أو هاتف Android مهمة مرة واحدة، وحوّلها إلى REST API وأداة MCP</p>
+  </header>
+  <main>
+    <section>
+      <h2>المميزات الرئيسية</h2>
+      <ul>
+        <li>محرك متصفح Chromium / Playwright مع التبويبات المتعددة وiframes وحماية كلمات المرور.</li>
+        <li>أتمتة سطح المكتب عبر Windows UIA وmacOS AX وLinux AT-SPI / GTK3.</li>
+        <li>تطبيق Android Companion بموافقة المستخدم الصريحة وجسر ADB المحلي.</li>
+        <li>محرك إصلاح ذكي (Self-Healing) من 4 مستويات مع منع تكرار عمليات الكتابة.</li>
+        <li>متجر أدوات موقع رقميًا بخوارزمية Ed25519 مع سجل تدقيق مشفر.</li>
+      </ul>
+    </section>
+  </main>
+  <script src="site.js"></script>
+</body>
+</html>

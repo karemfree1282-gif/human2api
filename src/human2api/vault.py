@@ -1,163 +1,171 @@
-"""Password-encrypted local secret vault; explicit CLI unlock, no master-key file.
+"""Encrypted Secret Vault using AES-256-GCM and scrypt KDF with auto-lock timeout."""
 
-AES-256-GCM with scrypt key derivation, a random salt and fresh nonce per write.
-The on-disk vault stores only KDF metadata and authenticated ciphertext. Updates
-use an exclusive lock and compare-and-swap to reject stale or concurrent writes.
-"""
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 import os
-import re
-import secrets
-import tempfile
-from pathlib import Path
-from typing import Any
+import pathlib
+import stat
+import time
+from typing import Dict, List, Optional, Set
 
-from .models import WorkflowError
-
-MAX_SIZE = 1024 * 1024
-NAME = re.compile(r"[a-zA-Z][a-zA-Z0-9_.-]{0,99}\Z")
-AAD = b"human2api.vault.v1"
+from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
 
-def _decode(value: str, size: int | None = None) -> bytes:
-    raw = base64.b64decode(value, validate=True)
-    if size is not None and len(raw) != size:
-        raise ValueError("invalid size")
-    return raw
+class VaultLockedError(PermissionError):
+    """Raised when attempting to read or write secrets while the vault is locked."""
 
 
-class Vault:
-    def __init__(self, path: Path, password: str, *, create: bool = False) -> None:
-        try:
-            from cryptography.exceptions import InvalidTag
-            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-            from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
-        except ImportError as exc:
-            raise WorkflowError("install the optional vault dependency: pip install 'human2api[vault]'") from exc
-        self.path = Path(path)
-        self._key: bytearray | None = None
-        self._data: dict[str, str] = {}
-        self._revision: str | None = None
-        if not isinstance(password, str) or len(password) < 12:
-            raise WorkflowError("vault passphrase must contain at least 12 characters")
-        if self.path.is_symlink():
-            raise WorkflowError("vault cannot be a symlink")
-        if create:
-            if self.path.exists():
-                raise WorkflowError("vault already exists")
-            self._salt = secrets.token_bytes(16)
-        else:
-            if not self.path.is_file() or self.path.stat().st_size > MAX_SIZE:
-                raise WorkflowError("vault is missing or too large")
-            if os.name != "nt" and self.path.stat().st_mode & 0o077:
-                raise WorkflowError("vault must have owner-only permissions")
-            raw = self.path.read_bytes()
-            try:
-                doc = json.loads(raw)
-                if set(doc) != {"version", "salt", "nonce", "ciphertext"} or doc["version"] != 1:
-                    raise ValueError("unsupported vault")
-                self._salt = _decode(doc["salt"], 16)
-                nonce, ciphertext = _decode(doc["nonce"], 12), _decode(doc["ciphertext"])
-            except (ValueError, TypeError, KeyError) as exc:
-                raise WorkflowError("invalid vault document") from exc
-            self._revision = hashlib.sha256(raw).hexdigest()
-        key = Scrypt(salt=self._salt, length=32, n=2**15, r=8, p=1).derive(password.encode("utf-8"))
-        self._key = bytearray(key)
-        if not create:
-            try:
-                self._data = json.loads(AESGCM(key).decrypt(nonce, ciphertext, AAD))
-                if not isinstance(self._data, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in self._data.items()):
-                    raise ValueError("invalid vault payload")
-            except (InvalidTag, ValueError, TypeError) as exc:
-                self.close()
-                raise WorkflowError("wrong passphrase or modified vault") from exc
-        else:
-            self._save()
+class VaultAuthenticationError(PermissionError):
+    """Raised when the vault passphrase is invalid or ciphertext integrity check fails."""
 
-    def _save(self) -> None:
-        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+class SecretVault:
+    """Authenticated AES-256-GCM encrypted secret store with scrypt key derivation."""
+
+    VERSION = 1
+    SALT_BYTES = 16
+    NONCE_BYTES = 12
+    DEFAULT_TIMEOUT_SECONDS = 300.0
+
+    def __init__(
+        self,
+        vault_path: pathlib.Path,
+        unlock_timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    ) -> None:
+        self.vault_path = pathlib.Path(vault_path)
+        self.unlock_timeout_seconds = float(unlock_timeout_seconds)
+        self._key: Optional[bytes] = None
+        self._unlocked_until: float = 0.0
+        self._cache: Dict[str, str] = {}
+
+    @staticmethod
+    def _derive_key(passphrase: str, salt: bytes) -> bytes:
+        if not passphrase or len(passphrase) < 4:
+            raise ValueError("Vault passphrase must be at least 4 characters.")
+        kdf = Scrypt(
+            salt=salt,
+            length=32,
+            n=2**14,
+            r=8,
+            p=1,
+        )
+        return kdf.derive(passphrase.encode("utf-8"))
+
+    def is_initialized(self) -> bool:
+        return self.vault_path.exists()
+
+    def is_unlocked(self) -> bool:
         if self._key is None:
-            raise WorkflowError("vault is locked")
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        lock = self.path.with_name(self.path.name + ".lock")
-        try:
-            lock_fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        except FileExistsError as exc:
-            raise WorkflowError("vault is busy; no update performed") from exc
-        temp = None
-        try:
-            os.close(lock_fd)
-            if self.path.is_symlink():
-                raise WorkflowError("vault cannot be a symlink")
-            current = hashlib.sha256(self.path.read_bytes()).hexdigest() if self.path.exists() else None
-            if current != self._revision:
-                raise WorkflowError("vault changed; unlock it again before writing")
-            nonce = secrets.token_bytes(12)
-            plaintext = json.dumps(self._data, ensure_ascii=False).encode("utf-8")
-            ciphertext = AESGCM(bytes(self._key)).encrypt(nonce, plaintext, AAD)
-            encoded = lambda x: base64.b64encode(x).decode("ascii")
-            data = json.dumps({"version": 1, "salt": encoded(self._salt), "nonce": encoded(nonce), "ciphertext": encoded(ciphertext)}).encode("ascii")
-            if len(data) > MAX_SIZE:
-                raise WorkflowError("vault exceeds size limit")
-            fd, name = tempfile.mkstemp(prefix=".vault-", dir=self.path.parent)
-            temp = Path(name)
-            with os.fdopen(fd, "wb") as stream:
-                stream.write(data)
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(temp, self.path)
-            self._revision = hashlib.sha256(data).hexdigest()
-        finally:
-            if temp is not None:
-                temp.unlink(missing_ok=True)
-            lock.unlink(missing_ok=True)
+            return False
+        if time.monotonic() > self._unlocked_until:
+            self.lock()
+            return False
+        return True
 
-    def names(self) -> list[str]:
-        if self._key is None:
-            raise WorkflowError("vault is locked")
-        return sorted(self._data)
-
-    def get(self, name: str) -> str:
-        if self._key is None:
-            raise WorkflowError("vault is locked")
-        if name not in self._data:
-            raise WorkflowError("vault entry does not exist")
-        return self._data[name]
-
-    def set(self, name: str, value: str) -> None:
-        if not NAME.fullmatch(name) or not isinstance(value, str) or len(value) > 10000:
-            raise WorkflowError("invalid vault entry")
-        previous = dict(self._data)
-        self._data[name] = value
-        try:
-            self._save()
-        except Exception:
-            self._data = previous
-            raise
-
-    def delete(self, name: str) -> None:
-        if name not in self._data:
-            raise WorkflowError("vault entry does not exist")
-        previous = dict(self._data)
-        del self._data[name]
-        try:
-            self._save()
-        except Exception:
-            self._data = previous
-            raise
-
-    def close(self) -> None:
-        self._data.clear()
-        if self._key is not None:
-            self._key[:] = b"\x00" * len(self._key)
+    def lock(self) -> None:
         self._key = None
+        self._unlocked_until = 0.0
+        self._cache.clear()
 
-    def __enter__(self) -> Any:
-        return self
+    def initialize(self, passphrase: str, initial_secrets: Optional[Dict[str, str]] = None) -> None:
+        salt = os.urandom(self.SALT_BYTES)
+        self._key = self._derive_key(passphrase, salt)
+        self._unlocked_until = time.monotonic() + self.unlock_timeout_seconds
+        self._cache = dict(initial_secrets or {})
+        self._persist(salt)
 
-    def __exit__(self, *args: Any) -> None:
-        self.close()
+    def unlock(self, passphrase: str) -> None:
+        if not self.vault_path.exists():
+            self.initialize(passphrase)
+            return
+        raw = json.loads(self.vault_path.read_text(encoding="utf-8"))
+        salt = base64.b64decode(raw["salt"])
+        nonce = base64.b64decode(raw["nonce"])
+        ciphertext = base64.b64decode(raw["ciphertext"])
+        key = self._derive_key(passphrase, salt)
+        aesgcm = AESGCM(key)
+        try:
+            plaintext = aesgcm.decrypt(nonce, ciphertext, b"human2api-vault-v1")
+        except InvalidTag as exc:
+            self.lock()
+            raise VaultAuthenticationError("Invalid vault passphrase or tampered vault file.") from exc
+        data = json.loads(plaintext.decode("utf-8"))
+        if not isinstance(data, dict):
+            raise VaultAuthenticationError("Corrupted vault payload.")
+        self._key = key
+        self._unlocked_until = time.monotonic() + self.unlock_timeout_seconds
+        self._cache = {str(k): str(v) for k, v in data.items()}
+
+    def _require_unlocked(self) -> bytes:
+        if not self.is_unlocked() or self._key is None:
+            raise VaultLockedError("SecretVault is locked or session expired. Unlock required.")
+        self._unlocked_until = time.monotonic() + self.unlock_timeout_seconds
+        return self._key
+
+    def _persist(self, salt: Optional[bytes] = None) -> None:
+        key = self._require_unlocked()
+        if salt is None:
+            if self.vault_path.exists():
+                existing = json.loads(self.vault_path.read_text(encoding="utf-8"))
+                salt = base64.b64decode(existing["salt"])
+            else:
+                salt = os.urandom(self.SALT_BYTES)
+        nonce = os.urandom(self.NONCE_BYTES)
+        aesgcm = AESGCM(key)
+        payload = json.dumps(self._cache, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ciphertext = aesgcm.encrypt(nonce, payload, b"human2api-vault-v1")
+        envelope = {
+            "version": self.VERSION,
+            "kdf": "scrypt",
+            "cipher": "AES-256-GCM",
+            "salt": base64.b64encode(salt).decode("ascii"),
+            "nonce": base64.b64encode(nonce).decode("ascii"),
+            "ciphertext": base64.b64encode(ciphertext).decode("ascii"),
+        }
+        self.vault_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = self.vault_path.with_suffix(".tmp")
+        tmp_path.write_text(json.dumps(envelope, indent=2) + "\n", encoding="utf-8")
+        try:
+            os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR)
+        except OSError:
+            pass
+        tmp_path.replace(self.vault_path)
+
+    def set_secret(self, name: str, value: str) -> None:
+        self._require_unlocked()
+        if not name or not name.strip():
+            raise ValueError("Secret name cannot be empty.")
+        self._cache[name.strip()] = str(value)
+        self._persist()
+
+    def get_secret(self, name: str) -> str:
+        self._require_unlocked()
+        if name not in self._cache:
+            raise KeyError(f"Secret {name!r} not found in vault.")
+        return self._cache[name]
+
+    def delete_secret(self, name: str) -> bool:
+        self._require_unlocked()
+        if name in self._cache:
+            del self._cache[name]
+            self._persist()
+            return True
+        return False
+
+    def list_secret_names(self) -> List[str]:
+        self._require_unlocked()
+        return sorted(self._cache.keys())
+
+    def all_secret_values(self) -> Set[str]:
+        """Used exclusively by the redaction filter to strip secrets from logs/outputs."""
+        if not self.is_unlocked():
+            return set()
+        return {v for v in self._cache.values() if v}
+
+    def __repr__(self) -> str:
+        state = "unlocked" if self.is_unlocked() else "locked"
+        return f"<SecretVault path={str(self.vault_path)!r} state={state!r}>"

@@ -1,3 +1,7 @@
-from .cli import main
+"""Entry point for `python -m human2api`."""
 
-raise SystemExit(main())
+import sys
+from human2api.cli import main
+
+if __name__ == "__main__":
+    sys.exit(main())

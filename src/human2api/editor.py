@@ -1,65 +1,88 @@
-"""Optimistic-concurrency workflow editing with private revision backups."""
+"""Visual Workflow Editor CAS (Compare-And-Swap) operations: add, delete, reorder, parameterize steps without manual JSON editing."""
+
 from __future__ import annotations
 
+import copy
 import hashlib
-import json
-import os
-import secrets
-from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List, Optional, Tuple
 
-from .models import WorkflowError, validate_workflow, workflow_file, save_workflow, WRITE_ACTIONS
+from human2api.models import AssertionSpec, InputSpec, Workflow, WorkflowStep
 
 
-class EditConflict(WorkflowError):
-    """The file has changed since it was opened; never overwrite it silently."""
+def compute_workflow_etag(workflow: Workflow) -> str:
+    payload = workflow.to_json(indent=0).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()[:16]
 
 
-def revision(path: Path) -> str:
-    if path.is_symlink():
-        raise WorkflowError("workflow cannot be a symlink")
-    return hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else "new"
+class VisualWorkflowEditor:
+    """Provides safe, high-level mutations on Workflow objects for the Visual Studio UI without requiring manual JSON editing."""
 
+    @staticmethod
+    def add_step(workflow: Workflow, step_dict: Dict[str, Any], position: Optional[int] = None) -> Workflow:
+        data = workflow.to_dict()
+        steps = list(data.get("steps", []))
+        idx = len(steps) if position is None else max(0, min(int(position), len(steps)))
+        new_step = WorkflowStep.from_dict(step_dict, index=idx).to_dict()
+        steps.insert(idx, new_step)
+        for i, s in enumerate(steps):
+            s["id"] = f"step_{i + 1}"
+        data["steps"] = steps
+        return Workflow.from_dict(data)
 
-def inspect_definition(workflow: dict[str, Any]) -> dict[str, Any]:
-    validate_workflow(workflow)
-    writes = [i for i, step in enumerate(workflow["steps"], 1) if step["action"] in WRITE_ACTIONS]
-    warnings = []
-    if writes:
-        warnings.append("This workflow changes application state; run approval is required.")
-    if not any(step["action"] in {"assert_text", "ui_assert_text", "assert_image"} for step in workflow["steps"]):
-        warnings.append("No result assertion is defined. Add one before using this on important data.")
-    if workflow.get("target", "browser") == "desktop" and any("x" in step for step in workflow["steps"]):
-        warnings.append("Coordinate steps depend on window position and display scaling.")
-    return {"valid": True, "executed": False, "stepCount": len(workflow["steps"]), "writeSteps": writes,
-            "requiredInputs": list(workflow.get("inputs", {})), "warnings": warnings}
+    @staticmethod
+    def delete_step(workflow: Workflow, index: int) -> Workflow:
+        data = workflow.to_dict()
+        steps = list(data.get("steps", []))
+        if len(steps) <= 1:
+            raise ValueError("Workflow must retain at least one step.")
+        if index < 0 or index >= len(steps):
+            raise IndexError(f"Step index {index} out of range.")
+        steps.pop(index)
+        for i, s in enumerate(steps):
+            s["id"] = f"step_{i + 1}"
+        data["steps"] = steps
+        return Workflow.from_dict(data)
 
+    @staticmethod
+    def reorder_steps(workflow: Workflow, from_index: int, to_index: int) -> Workflow:
+        data = workflow.to_dict()
+        steps = list(data.get("steps", []))
+        if from_index < 0 or from_index >= len(steps) or to_index < 0 or to_index >= len(steps):
+            raise IndexError("Step reorder index out of range.")
+        item = steps.pop(from_index)
+        steps.insert(to_index, item)
+        for i, s in enumerate(steps):
+            s["id"] = f"step_{i + 1}"
+        data["steps"] = steps
+        return Workflow.from_dict(data)
 
-def save_revision(directory: Path, name: str, workflow: dict[str, Any], expected: str) -> str:
-    validate_workflow(workflow)
-    if workflow["name"] != name:
-        raise WorkflowError("name differs from route")
-    path = workflow_file(directory, name)
-    directory.mkdir(parents=True, exist_ok=True)
-    lock = directory / (name + ".edit-lock")
-    try:
-        fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError as exc:
-        raise EditConflict("workflow is being edited; retry after reloading") from exc
-    try:
-        os.close(fd)
-        current = revision(path)
-        if expected != current:
-            raise EditConflict("workflow changed since loading; reload before saving")
-        if current != "new":
-            backup_dir = directory.parent / ".h2a" / "revisions" / name
-            backup_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-            dest = backup_dir / (current + ".json")
-            if not dest.exists():
-                fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-                with os.fdopen(fd, "wb") as stream:
-                    stream.write(path.read_bytes())
-        save_workflow(path, workflow)
-        return revision(path)
-    finally:
-        lock.unlink(missing_ok=True)
+    @staticmethod
+    def set_input_parameter(
+        workflow: Workflow,
+        name: str,
+        input_type: str = "string",
+        description: str = "",
+        required: bool = True,
+        sensitive: bool = False,
+        default: Any = None,
+    ) -> Workflow:
+        data = workflow.to_dict()
+        inputs = dict(data.get("inputs") or {})
+        spec = InputSpec(
+            type=input_type,
+            description=description,
+            required=required,
+            sensitive=sensitive or input_type == "secret",
+            default=None if (sensitive or input_type == "secret") else default,
+        )
+        inputs[name.strip()] = spec.to_dict()
+        data["inputs"] = inputs
+        return Workflow.from_dict(data)
+
+    @staticmethod
+    def add_assertion(workflow: Workflow, assertion_dict: Dict[str, Any]) -> Workflow:
+        data = workflow.to_dict()
+        assertions = list(data.get("assertions") or [])
+        assertions.append(AssertionSpec.from_dict(assertion_dict).to_dict())
+        data["assertions"] = assertions
+        return Workflow.from_dict(data)

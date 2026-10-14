@@ -1,3 +1,2 @@
 User-agent: *
 Allow: /
-Sitemap: https://karemfree1282-gif.github.io/human2api/sitemap.xml

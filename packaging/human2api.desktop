@@ -1,7 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Human2API Studio
-Comment=Inspect and run consent-based local automations
-Exec=Human2API-Studio
-Terminal=false
-Categories=Development;Utility;

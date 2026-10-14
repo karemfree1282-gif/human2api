@@ -1,263 +1,468 @@
-"""Privacy-conscious browser recording with deterministic selector fallbacks.
-
-Captured form values are discarded immediately and replaced by typed variables.
-This is a guided browser workflow recorder, not a desktop/screen recorder.
-"""
+"""Multi-target Workflow Recorder with privacy redaction, secret variable substitution, and stable selector generation."""
 
 from __future__ import annotations
 
-import json
 import re
-import secrets
-from pathlib import Path
-from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+import urllib.parse
+from typing import Any, Dict, List, Optional, Tuple
 
-from .models import NAME_RE, WorkflowError, save_workflow
-from .runner import launch_browser
+from human2api.contracts import is_sensitive_field_name
+from human2api.models import (
+    AssertionSpec,
+    HealingConfig,
+    InputSpec,
+    SelectorCandidate,
+    Workflow,
+    WorkflowStep,
+)
 
-# No imported scripts, remote telemetry, or third-party analytics.
-RECORDER_SCRIPT = r"""
+
+def _slugify_var_name(raw: str, prefix: str = "field", index: int = 1) -> str:
+    cleaned = re.sub(r"[^a-zA-Z0-9_]+", "_", (raw or "").strip()).strip("_").lower()
+    if not cleaned or cleaned[0].isdigit():
+        cleaned = f"{prefix}_{cleaned}" if cleaned else f"{prefix}_{index}"
+    return cleaned[:48]
+
+
+def build_resilient_selectors(event: Dict[str, Any]) -> Tuple[str, List[SelectorCandidate]]:
+    """Build a stable primary selector and ranked fallback selectors from a recorded UI/DOM event."""
+    candidates: List[SelectorCandidate] = []
+    testid = event.get("data_testid") or event.get("testid")
+    el_id = event.get("id")
+    aria_label = event.get("aria_label")
+    name_attr = event.get("name_attr")
+    role = event.get("role") or ""
+    accessible_name = event.get("accessible_name") or event.get("text") or aria_label or ""
+    placeholder = event.get("placeholder")
+    automation_id = event.get("automation_id")
+    resource_id = event.get("resource_id")
+    css = event.get("selector") or event.get("css")
+    xpath = event.get("xpath")
+
+    if testid:
+        candidates.append(
+            SelectorCandidate(
+                strategy="testid",
+                value=f'[data-testid="{testid}"]',
+                role=role or None,
+                name=accessible_name or None,
+                confidence=0.99,
+            )
+        )
+    if automation_id:
+        candidates.append(
+            SelectorCandidate(
+                strategy="automation_id",
+                value=str(automation_id),
+                role=role or None,
+                name=accessible_name or None,
+                confidence=0.98,
+            )
+        )
+    if resource_id:
+        candidates.append(
+            SelectorCandidate(
+                strategy="resource_id",
+                value=str(resource_id),
+                role=role or None,
+                name=accessible_name or None,
+                confidence=0.98,
+            )
+        )
+    if el_id and not re.search(r"\d{5,}", str(el_id)):
+        candidates.append(
+            SelectorCandidate(
+                strategy="id",
+                value=f"#{el_id}",
+                role=role or None,
+                name=accessible_name or None,
+                confidence=0.96,
+            )
+        )
+    if aria_label:
+        candidates.append(
+            SelectorCandidate(
+                strategy="aria-label",
+                value=f'[aria-label="{aria_label}"]',
+                role=role or None,
+                name=aria_label,
+                confidence=0.94,
+            )
+        )
+    if name_attr:
+        candidates.append(
+            SelectorCandidate(
+                strategy="name",
+                value=f'[name="{name_attr}"]',
+                role=role or None,
+                name=accessible_name or None,
+                confidence=0.92,
+            )
+        )
+    if placeholder:
+        candidates.append(
+            SelectorCandidate(
+                strategy="placeholder",
+                value=f'[placeholder="{placeholder}"]',
+                role=role or None,
+                name=placeholder,
+                confidence=0.89,
+            )
+        )
+    if role and accessible_name:
+        candidates.append(
+            SelectorCandidate(
+                strategy="role",
+                value=f'role={role}[name="{accessible_name}"]',
+                role=role,
+                name=accessible_name,
+                confidence=0.88,
+            )
+        )
+    if css:
+        candidates.append(
+            SelectorCandidate(
+                strategy="css",
+                value=str(css),
+                role=role or None,
+                name=accessible_name or None,
+                confidence=0.82,
+            )
+        )
+    if xpath:
+        candidates.append(
+            SelectorCandidate(
+                strategy="xpath",
+                value=str(xpath),
+                role=role or None,
+                name=accessible_name or None,
+                confidence=0.75,
+            )
+        )
+
+    if not candidates:
+        fallback_css = event.get("tag_name") or "body"
+        return str(fallback_css), []
+
+    primary = candidates[0].value
+    # Deduplicate fallbacks while preserving order
+    seen = {primary}
+    fallbacks: List[SelectorCandidate] = []
+    for cand in candidates[1:]:
+        if cand.value not in seen:
+            seen.add(cand.value)
+            fallbacks.append(cand)
+    return primary, fallbacks
+
+
+class WorkflowRecorder:
+    """Converts raw user interaction events into a privacy-safe, parameterized Workflow."""
+
+    def __init__(
+        self,
+        name: str,
+        target: str = "browser",
+        network_policy: str = "strict",
+    ) -> None:
+        self.name = name
+        self.target = target
+        self.network_policy = network_policy
+        self.events: List[Dict[str, Any]] = []
+
+    def record_event(self, event: Dict[str, Any]) -> None:
+        self.events.append(dict(event))
+
+    def compile_workflow(self) -> Workflow:
+        steps: List[WorkflowStep] = []
+        inputs: Dict[str, InputSpec] = {}
+        allowed_hosts: List[str] = []
+        allowed_apps: List[str] = []
+        allowed_packages: List[str] = []
+        assertions: List[AssertionSpec] = []
+        has_write = False
+
+        for idx, ev in enumerate(self.events):
+            action = str(ev.get("action") or ev.get("type") or "click").lower().strip()
+            if action == "input":
+                action = "type"
+
+            url = ev.get("url")
+            if url:
+                parsed = urllib.parse.urlparse(str(url))
+                if parsed.hostname and parsed.hostname not in allowed_hosts:
+                    allowed_hosts.append(parsed.hostname)
+
+            app_name = ev.get("app_name") or ev.get("windowTitle")
+            if app_name and app_name not in allowed_apps and self.target in ("desktop", "windows-uia", "macos-ax", "linux-atspi"):
+                allowed_apps.append(str(app_name))
+
+            pkg = ev.get("packageName") or ev.get("package")
+            if pkg and pkg not in allowed_packages:
+                allowed_packages.append(str(pkg))
+
+            if action in ("goto", "navigate"):
+                steps.append(
+                    WorkflowStep(
+                        id=f"step_{idx + 1}",
+                        action="goto",
+                        url=str(url or ""),
+                        tabIndex=ev.get("tabIndex"),
+                    )
+                )
+                continue
+
+            if action in ("switch_tab", "open_tab", "close_tab"):
+                steps.append(
+                    WorkflowStep(
+                        id=f"step_{idx + 1}",
+                        action=action,
+                        tabIndex=ev.get("tabIndex"),
+                        tabTitle=ev.get("tabTitle"),
+                        url=ev.get("url"),
+                    )
+                )
+                continue
+
+            if action == "scroll":
+                primary_sel, fallbacks = build_resilient_selectors(ev) if ev.get("selector") or ev.get("id") else (None, [])
+                steps.append(
+                    WorkflowStep(
+                        id=f"step_{idx + 1}",
+                        action="scroll",
+                        selector=primary_sel,
+                        fallbackSelectors=fallbacks,
+                        deltaX=float(ev.get("deltaX", 0)),
+                        deltaY=float(ev.get("deltaY", 300)),
+                        framePath=list(ev.get("framePath") or []),
+                    )
+                )
+                continue
+
+            primary_sel, fallbacks = build_resilient_selectors(ev)
+            role = ev.get("role")
+            acc_name = ev.get("accessible_name") or ev.get("aria_label") or ev.get("label") or ev.get("text")
+            auto_id = ev.get("automation_id") or ev.get("id")
+            res_id = ev.get("resource_id")
+            frame_path = list(ev.get("framePath") or [])
+
+            if action in ("type", "type_text", "fill", "select"):
+                has_write = True
+                field_hint = (
+                    ev.get("name_attr")
+                    or ev.get("id")
+                    or ev.get("aria_label")
+                    or ev.get("placeholder")
+                    or ev.get("automation_id")
+                    or f"input_{idx + 1}"
+                )
+                is_secret = bool(
+                    ev.get("is_password")
+                    or str(ev.get("input_type", "")).lower() == "password"
+                    or "password" in str(ev.get("autocomplete", "")).lower()
+                    or ev.get("sensitive")
+                    or is_sensitive_field_name(str(field_hint))
+                    or is_sensitive_field_name(str(acc_name or ""))
+                )
+                var_name = _slugify_var_name(str(field_hint), prefix="secret" if is_secret else "param", index=idx + 1)
+
+                if is_secret:
+                    # NEVER store raw password or secret value in workflow steps or input defaults
+                    inputs[var_name] = InputSpec(
+                        type="secret",
+                        description=f"Secret credential for {field_hint}",
+                        required=True,
+                        sensitive=True,
+                        default=None,
+                    )
+                    step_text = f"${{secret:{var_name}}}"
+                else:
+                    raw_val = ev.get("value") if ev.get("value") is not None else ev.get("text", "")
+                    inputs[var_name] = InputSpec(
+                        type="string",
+                        description=f"Input value for {field_hint}",
+                        required=True,
+                        sensitive=False,
+                        default=str(raw_val) if raw_val is not None else "",
+                    )
+                    step_text = f"${{input:{var_name}}}"
+
+                steps.append(
+                    WorkflowStep(
+                        id=f"step_{idx + 1}",
+                        action="select" if action == "select" else ("type_text" if self.target.startswith("android") else "type"),
+                        selector=primary_sel,
+                        fallbackSelectors=fallbacks,
+                        text=step_text if action != "select" else None,
+                        value=step_text if action == "select" else None,
+                        variable=var_name,
+                        sensitive=is_secret,
+                        idempotent=not bool(ev.get("submit", False)),
+                        isWriteAction=True,
+                        framePath=frame_path,
+                        role=role,
+                        name=acc_name,
+                        automationId=auto_id,
+                        windowTitle=ev.get("windowTitle"),
+                        packageName=pkg,
+                        resourceId=res_id,
+                        contentDesc=ev.get("content_desc"),
+                    )
+                )
+                continue
+
+            if action == "upload_file":
+                has_write = True
+                var_name = _slugify_var_name(ev.get("name_attr") or "upload_file", prefix="file", index=idx + 1)
+                # Store only basename, never full host user path
+                raw_file = str(ev.get("filePath") or ev.get("file_name") or "upload.txt").replace("\\", "/").split("/")[-1]
+                inputs[var_name] = InputSpec(
+                    type="file",
+                    description="Relative file path inside approved workspace upload directory",
+                    required=True,
+                    sensitive=False,
+                    default=raw_file,
+                )
+                steps.append(
+                    WorkflowStep(
+                        id=f"step_{idx + 1}",
+                        action="upload_file",
+                        selector=primary_sel,
+                        fallbackSelectors=fallbacks,
+                        filePath=f"${{input:{var_name}}}",
+                        variable=var_name,
+                        idempotent=False,
+                        isWriteAction=True,
+                        framePath=frame_path,
+                        role=role or "button",
+                        name=acc_name,
+                    )
+                )
+                continue
+
+            if action in ("assert_text", "assert_visible", "assert_url", "assert_value"):
+                assertions.append(
+                    AssertionSpec(
+                        type=action,
+                        selector=primary_sel if action != "assert_url" else None,
+                        expected=ev.get("expected") or ev.get("text") or ev.get("url"),
+                        match=str(ev.get("match", "contains")),
+                    )
+                )
+                steps.append(
+                    WorkflowStep(
+                        id=f"step_{idx + 1}",
+                        action=action,
+                        selector=primary_sel if action != "assert_url" else None,
+                        expected=ev.get("expected") or ev.get("text") or ev.get("url"),
+                        match=str(ev.get("match", "contains")),
+                        framePath=frame_path,
+                    )
+                )
+                continue
+
+            # Default click / interactive step
+            is_submit = bool(
+                ev.get("submit")
+                or str(ev.get("button_type", "")).lower() == "submit"
+                or any(
+                    w in str(acc_name or "").lower()
+                    for w in ("submit", "save", "pay", "confirm", "send", "create", "delete", "إرسال", "حفظ", "تأكيد")
+                )
+            )
+            if is_submit:
+                has_write = True
+            steps.append(
+                WorkflowStep(
+                    id=f"step_{idx + 1}",
+                    action=action if action in ("click", "double_click", "download_file", "extract_text", "focus_window", "resize_window", "press_key", "back", "home", "swipe") else "click",
+                    selector=primary_sel,
+                    fallbackSelectors=fallbacks,
+                    idempotent=not is_submit,
+                    isWriteAction=is_submit,
+                    framePath=frame_path,
+                    tabIndex=ev.get("tabIndex"),
+                    downloadName=ev.get("downloadName"),
+                    role=role or "button",
+                    name=acc_name,
+                    automationId=auto_id,
+                    windowTitle=ev.get("windowTitle"),
+                    packageName=pkg,
+                    resourceId=res_id,
+                    contentDesc=ev.get("content_desc"),
+                    x=ev.get("x"),
+                    y=ev.get("y"),
+                )
+            )
+
+        return Workflow(
+            name=self.name,
+            target=self.target,
+            mode="write" if has_write else "read",
+            networkPolicy=self.network_policy,
+            allowedHosts=allowed_hosts,
+            allowedApps=allowed_apps,
+            allowedPackages=allowed_packages,
+            inputs=inputs,
+            steps=steps,
+            assertions=assertions,
+            healing=HealingConfig(enabled=True, maxTier=3, aiConsent=False, aiProvider="none"),
+        )
+
+
+BROWSER_RECORDER_INJECTION_JS = r"""
 (() => {
-  if (window.__h2aLoaded) return;
-  window.__h2aLoaded = true;
-  const CSSQ = (s) => CSS.escape(String(s));
-  const quote = (s) => JSON.stringify(String(s));
-  const preferred = (el) => {
-    if (!(el instanceof Element)) return [];
-    const list = [];
-    if (el.hasAttribute('data-testid')) list.push(`[data-testid=${quote(el.getAttribute('data-testid'))}]`);
-    if (el.id) list.push(`#${CSSQ(el.id)}`);
-    if (el.getAttribute('name')) list.push(`${el.tagName.toLowerCase()}[name=${quote(el.getAttribute('name'))}]`);
-    if (el.getAttribute('aria-label')) list.push(`${el.tagName.toLowerCase()}[aria-label=${quote(el.getAttribute('aria-label'))}]`);
-    const route = [];
-    for (let node = el; node && node.nodeType === 1 && route.length < 9; node = node.parentElement) {
-      if (node.id) { route.unshift(`#${CSSQ(node.id)}`); break; }
-      let tag = node.tagName.toLowerCase();
-      let sibling = node;
-      let nth = 1;
-      while ((sibling = sibling.previousElementSibling)) {
-        if (sibling.tagName === node.tagName) nth++;
-      }
-      route.unshift(`${tag}:nth-of-type(${nth})`);
-    }
-    if (route.length) list.push(route.join(' > '));
-    return [...new Set(list)].filter((sel) => {
-      try { const matches = document.querySelectorAll(sel); return matches.length === 1 && matches[0] === el; } catch (_) { return false; }
-    });
-  };
-  const emit = (msg) => { try { window.h2aBridge(msg).catch(() => {}); } catch (_) {} };
-  const ignore = (node) => !node || node.closest?.('#h2a-recorder-control');
-  const metadata = (el) => {
-    const selectors = preferred(el);
-    if (!selectors.length) return null;
-    const label = el.getAttribute('aria-label') || '';
-    const role = el.getAttribute('role') || (el.tagName === 'BUTTON' ? 'button' : '');
-    return {selector: selectors[0], alternatives: selectors.slice(1, 6), ...(label ? {label:label.slice(0,150)} : {}), ...(role ? {role:role.slice(0,70)} : {})};
-  };
-  document.addEventListener('change', (ev) => {
-    const el = ev.target;
-    if (ignore(el)) return;
-    const target = metadata(el);
-    if (!target) return;
-    if (el instanceof HTMLSelectElement) {
-      emit({action: 'select', ...target, field: el.name || el.id || 'selected_option'});
-    } else if (el instanceof HTMLInputElement && ['checkbox', 'radio'].includes(el.type)) {
-      if (el.type === 'radio') {
-        if (el.checked) emit({action: 'check', checked: true, ...target});
-      } else emit({action: 'check', checked: el.checked, ...target});
-    } else if ((el instanceof HTMLInputElement && !['file','hidden','submit','button','reset','image'].includes(el.type)) || el instanceof HTMLTextAreaElement) {
-      emit({action: 'fill', ...target, field: el.name || el.id || el.getAttribute('aria-label') || 'input', inputType: el.type || 'text'});
-    }
-  }, true);
-  document.addEventListener('click', (ev) => {
-    if (!ev.isTrusted) return; // Ignore app-generated synthetic clicks and downloads.
-    const el = ev.target?.closest?.('button, a, input[type="submit"], input[type="button"], [role="button"]');
-    if (!el || ignore(el)) return;
-    const target = metadata(el);
-    if (target) emit({action: 'click', ...target});
-  }, true);
-  function toolbar() {
-    if (!document.body || document.getElementById('h2a-recorder-control')) return;
-    const control = document.createElement('div');
-    control.id = 'h2a-recorder-control';
-    control.style.cssText = 'all:initial!important;position:fixed!important;z-index:2147483647!important;bottom:18px!important;right:18px!important;display:flex!important;align-items:center!important;gap:12px!important;background:#10182e!important;color:white!important;padding:12px 16px!important;border:1px solid #536184!important;border-radius:16px!important;box-shadow:0 12px 40px #0007!important;font:600 13px system-ui!important';
-    const label = document.createElement('span');
-    label.textContent = '● Human2API recording';
-    label.style.cssText = 'color:#9ef3c7!important;font:600 13px system-ui!important';
-    const stop = document.createElement('button');
-    stop.textContent = 'Stop & save';
-    stop.style.cssText = 'all:initial!important;cursor:pointer!important;background:#66f0ba!important;border-radius:9px!important;color:#08111f!important;padding:8px 12px!important;font:700 12px system-ui!important';
-    stop.addEventListener('click', (event) => { event.stopPropagation(); emit({action: 'stop'}); });
-    control.append(label, stop);
-    document.body.appendChild(control);
+  if (window.__h2aRecorderInstalled) return;
+  window.__h2aRecorderInstalled = true;
+  window.__h2aRecordedEvents = window.__h2aRecordedEvents || [];
+
+  function computeSelector(el) {
+    if (!el || el.nodeType !== 1) return "body";
+    if (el.getAttribute("data-testid")) return `[data-testid="${el.getAttribute("data-testid")}"]`;
+    if (el.id) return `#${el.id}`;
+    if (el.getAttribute("name")) return `${el.tagName.toLowerCase()}[name="${el.getAttribute("name")}"]`;
+    if (el.getAttribute("aria-label")) return `[aria-label="${el.getAttribute("aria-label")}"]`;
+    return el.tagName.toLowerCase();
   }
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', toolbar, {once:true});
-  else toolbar();
+
+  function buildMeta(el, action) {
+    const tag = (el.tagName || "").toLowerCase();
+    const inputType = (el.getAttribute("type") || "").toLowerCase();
+    const isPassword = inputType === "password" || (el.getAttribute("autocomplete") || "").includes("password");
+    return {
+      action: action,
+      url: window.location.href,
+      tag_name: tag,
+      id: el.id || null,
+      data_testid: el.getAttribute("data-testid") || null,
+      name_attr: el.getAttribute("name") || null,
+      aria_label: el.getAttribute("aria-label") || null,
+      placeholder: el.getAttribute("placeholder") || null,
+      role: el.getAttribute("role") || (tag === "button" ? "button" : (tag === "a" ? "link" : (tag === "input" || tag === "textarea" ? "textbox" : tag))),
+      accessible_name: (el.innerText || el.getAttribute("aria-label") || el.getAttribute("placeholder") || "").trim().slice(0, 80),
+      selector: computeSelector(el),
+      input_type: inputType,
+      is_password: isPassword,
+      button_type: (el.getAttribute("type") || "").toLowerCase(),
+      value: isPassword ? "[REDACTED]" : (el.value || null)
+    };
+  }
+
+  document.addEventListener("click", (e) => {
+    const el = e.target.closest("button, a, input, select, [role], [data-testid]") || e.target;
+    window.__h2aRecordedEvents.push(buildMeta(el, "click"));
+  }, true);
+
+  document.addEventListener("change", (e) => {
+    const el = e.target;
+    if (!el) return;
+    const tag = (el.tagName || "").toLowerCase();
+    const action = tag === "select" ? "select" : (el.type === "file" ? "upload_file" : "type");
+    const ev = buildMeta(el, action);
+    if (el.type === "file" && el.files && el.files.length > 0) {
+      ev.file_name = el.files[0].name;
+      ev.value = null;
+    }
+    window.__h2aRecordedEvents.push(ev);
+  }, true);
 })();
 """
-
-
-def variable_name(name: str, used: set[str]) -> str:
-    normalized = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")[:45]
-    if not normalized or not normalized[0].isalpha():
-        normalized = "field_" + (normalized or "value")
-    candidate = normalized
-    suffix = 2
-    while candidate in used:
-        candidate = (normalized[:50] + f"_{suffix}")
-        suffix += 1
-    return candidate
-
-
-def workflow_from_events(name: str, description: str, start_url: str, events: list[dict[str, Any]]) -> dict[str, Any]:
-    if not NAME_RE.fullmatch(name):
-        raise WorkflowError("invalid workflow name")
-    # Never persist URLs' query strings or fragments, which may contain API keys.
-    parts = urlsplit(start_url)
-    scrubbed_url = urlunsplit((parts.scheme, parts.netloc, parts.path or "/", "", ""))
-    inputs: dict[str, Any] = {}
-    fields: dict[str, str] = {}
-    steps: list[dict[str, Any]] = []
-    active_tab = 0
-    for event in events:
-        action = event.get("action")
-        if action == "switch_tab":
-            index = event.get("index")
-            if isinstance(index, int) and not isinstance(index, bool) and 0 <= index <= 20:
-                steps.append({"action": "switch_tab", "index": index})
-                active_tab = index
-            continue
-        if action not in {"click", "fill", "select", "check"}:
-            continue
-        selector = event.get("selector")
-        if not isinstance(selector, str) or not selector:
-            continue
-        step = {"action": action, "selector": selector}
-        frame = event.get("frame")
-        if isinstance(frame, str) and frame:
-            step["frame"] = frame[:2048]
-        frames = event.get("frames")
-        if isinstance(frames, list) and frames and all(isinstance(x, str) and x for x in frames):
-            step["frames"] = frames
-        for hint in ("label", "role"):
-            if isinstance(event.get(hint), str) and 0 < len(event[hint]) < 150:
-                step[hint] = event[hint]
-        fallbacks = event.get("alternatives")
-        if isinstance(fallbacks, list) and fallbacks:
-            step["alternatives"] = [s for s in fallbacks[:5] if isinstance(s, str) and s]
-        if action in {"fill", "select"}:
-            field = str(event.get("field") or "field")
-            # Reuse the same input when a field is edited twice.
-            identity = json.dumps([active_tab, step.get("frames", [step.get("frame", "")]), selector, field])
-            if identity not in fields:
-                key = variable_name(field, set(inputs))
-                fields[identity] = key
-                input_type = str(event.get("inputType", "text"))
-                special = bool(re.search(r"password|token|secret|api.?key|card|cvv|pin|otp|auth", field, re.I))
-                secret = special or input_type in {"password", "tel"}
-                inputs[key] = {"type": "string", "description": f"Value for {field[:90]}", "required": True, "secret": secret}
-            step["value"] = "{{" + fields[identity] + "}}"
-            # Neither recorded values nor browser text are ever transferred.
-        elif action == "check":
-            step["checked"] = bool(event.get("checked"))
-        steps.append(step)
-    if not steps:
-        raise WorkflowError("no browser actions were recorded")
-    from urllib.parse import urlparse
-    return {
-        "schemaVersion": 1,
-        "name": name,
-        "description": description,
-        "startUrl": scrubbed_url,
-        "permissions": "write",
-        "allowedHosts": [urlparse(scrubbed_url).hostname],
-        "inputs": inputs,
-        "steps": steps,
-    }
-
-
-def record(url: str, *, name: str, output_dir: str | Path = "workflows", browser_path: str | None = None, headless: bool = False) -> Path:
-    """Record the top-level tab until Stop & save is clicked or the tab closes."""
-    from playwright.sync_api import sync_playwright
-    from threading import Event
-
-    destination = Path(output_dir) / f"{name}.json"
-    if destination.exists():
-        raise WorkflowError(f"workflow already exists: {destination}; choose a new name")
-    done = Event()
-    events: list[dict[str, Any]] = []
-    recording_errors: list[str] = []
-    with sync_playwright() as playwright:
-        browser = launch_browser(playwright, headless=headless, browser_path=browser_path)
-        try:
-            context = browser.new_context()
-            page = context.new_page()
-            tabs = [page]
-            active_tab = 0
-            def bridge(source: Any, payload: Any) -> None:
-                nonlocal active_tab
-                tab = source.get("page")
-                frame = source.get("frame")
-                if not isinstance(payload, dict) or tab is None or frame is None:
-                    return
-                if payload.get("action") == "stop":
-                    done.set()
-                    return
-                if tab not in tabs:
-                    tabs.append(tab)
-                index = tabs.index(tab)
-                if index != active_tab and len(events) < 248:
-                    events.append({"action": "switch_tab", "index": index})
-                    active_tab = index
-                if frame != tab.main_frame:
-                    try:
-                        chain = []
-                        current = frame
-                        while current != tab.main_frame:
-                            if len(chain) >= 10 or current.parent_frame is None:
-                                raise WorkflowError("iframe depth exceeds supported bound")
-                            iframe = current.frame_element()
-                            selector = None
-                            for attribute in ("id", "name"):
-                                value = iframe.get_attribute(attribute)
-                                if value and re.fullmatch(r"[a-zA-Z0-9_-]{1,100}", value):
-                                    proposed = "iframe[" + attribute + "=" + json.dumps(value) + "]"
-                                    if current.parent_frame.locator(proposed).count() == 1:
-                                        selector = proposed
-                                        break
-                            if selector is None:
-                                raise WorkflowError("iframe requires a unique stable id or name")
-                            chain.insert(0, selector)
-                            current = current.parent_frame
-                        payload["frame" if len(chain) == 1 else "frames"] = chain[0] if len(chain) == 1 else chain
-                    except Exception:
-                        recording_errors.append("An iframe action could not be addressed safely; no partial recording was saved")
-                        done.set()
-                        return
-                if len(events) < 250:
-                    events.append(payload)
-                else:
-                    recording_errors.append("Recording exceeded 250 actions; split it into smaller workflows")
-                    done.set()
-            context.expose_binding("h2aBridge", bridge)
-            context.add_init_script(script=RECORDER_SCRIPT)
-            page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            print("Recording: interact with the Chromium window and press Stop & save.")
-            while not done.is_set() and any(not p.is_closed() for p in context.pages):
-                try:
-                    open_pages = [tab for tab in context.pages if not tab.is_closed()]
-                    if open_pages:
-                        open_pages[0].wait_for_timeout(200)
-                except Exception:
-                    break
-        finally:
-            browser.close()
-    if recording_errors:
-        raise WorkflowError(recording_errors[0])
-    description = f"Browser task recorded from {urlsplit(url).hostname}"
-    destination = Path(output_dir) / f"{name}.json"
-    if destination.exists():
-        raise WorkflowError(f"workflow already exists: {destination}; choose a new name")
-    workflow = workflow_from_events(name, description, url, events)
-    return save_workflow(destination, workflow)

@@ -1,33 +1,6 @@
 # Contributing to Human2API
 
-We want small, testable PRs that improve trustworthiness. All skill levels are welcome.
-
-## Set up
-
-```bash
-python -m pip install -e '.[dev]'
-python -m playwright install chromium
-python -m pytest -q
-```
-
-Use a new branch for your change. Keep browser tests deterministic and run them against the bundled fake invoice demo, not third-party websites. Never commit recorded credentials or real people's data.
-
-## Submitting a PR
-
-1. Describe the exact user problem and expected behavior.
-2. Add/adjust tests for new actions and security boundaries.
-3. Run the test suite, and state any skipped or environment-blocked tests.
-4. Update README, SECURITY and docs/ROADMAP where appropriate.
-5. Make sure your change does not record or persist user form values.
-
-We particularly need accessibility selector strategies, safer action verification, platform testing, documentation translations, and a reproducible permission model.
-
-## Conduct and licensing
-
-Be respectful and constructive; see CODE_OF_CONDUCT.md. Contributions are licensed under Apache-2.0. By submitting code you confirm you have the rights to contribute it.
-
-## v0.2 platform contributions
-
-Platform executors must use allowlisted actions and avoid executing arbitrary code from workflow JSON. Tests must not require developers to connect a personal desktop or phone; use dependency injection/mocks for base CI, and document actual-hardware test procedures separately. Do not propose passive recording of typed passwords. For Android, test only devices you own and authorize over ADB. For AI selector healing, never send typed form values or full page HTML to providers.
-
-To contribute shareable workflows, follow [community catalog guidelines](marketplace/README.md).
+1. Create a feature branch from `main`.
+2. Write regression tests for every bug fix or security boundary.
+3. Run `python3 scripts/complete.py --repair` and ensure 0 failures and 0 skipped tests.
+4. Never commit secrets, tokens, or unverified binaries.

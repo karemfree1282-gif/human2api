@@ -1,157 +1,124 @@
-"""Explicitly scoped native accessibility operations: Windows UIA, macOS AX, Linux AT-SPI.
+"""Cross-platform Desktop Accessibility Tree abstractions for Windows UIA, macOS AX, and Linux AT-SPI / ATK."""
 
-Queries a unique visible non-password control in a named window. Never records
-keystrokes or grants OS permissions. Backend integration needs a real OS session.
-"""
 from __future__ import annotations
 
-import sys
-from typing import Any
+import os
+import platform
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple
 
-from .models import WorkflowError, template
+from human2api.healing import UIElementCandidate
 
 
-def _desktop() -> Any:
-    if sys.platform == "darwin":
-        from .native import AXDesktop
-        return AXDesktop()
-    if sys.platform.startswith("linux"):
-        from .native import AtspiDesktop
-        return AtspiDesktop()
-    if sys.platform != "win32":
-        raise WorkflowError("unsupported native accessibility platform")
+@dataclass
+class DesktopAccessibleNode:
+    node_id: str
+    automation_id: str
+    name: str
+    role: str
+    window_title: str
+    app_name: str
+    bounds: Tuple[int, int, int, int] = (0, 0, 100, 32)  # (x, y, width, height)
+    visible: bool = True
+    enabled: bool = True
+    focused: bool = False
+    is_password: bool = False
+    value: str = ""
+    children: List["DesktopAccessibleNode"] = field(default_factory=list)
+
+    @property
+    def center(self) -> Tuple[int, int]:
+        x, y, w, h = self.bounds
+        return (x + max(1, w) // 2, y + max(1, h) // 2)
+
+    def to_candidate(self) -> UIElementCandidate:
+        selector = (
+            f'automationId="{self.automation_id}"'
+            if self.automation_id
+            else f'role={self.role}[name="{self.name}"]'
+        )
+        return UIElementCandidate(
+            candidate_id=self.node_id,
+            selector=selector,
+            role=self.role.lower(),
+            name=self.name,
+            automation_id=self.automation_id,
+            placeholder="",
+            tag_name=self.role.lower(),
+            visible=self.visible and self.bounds[2] > 0 and self.bounds[3] > 0,
+            enabled=self.enabled,
+            is_password=self.is_password,
+            host_or_package=self.app_name or self.window_title,
+            context_landmark=self.window_title,
+        )
+
+
+def detect_linux_display_protocol() -> Dict[str, Any]:
+    """Inspect current Linux session protocol (X11 vs Wayland) and accessibility bus availability without prematurely initializing GTK display."""
+    wayland_display = os.environ.get("WAYLAND_DISPLAY", "")
+    x11_display = os.environ.get("DISPLAY", "")
+    xdg_type = os.environ.get("XDG_SESSION_TYPE", "").lower()
+    is_wayland = bool(wayland_display or xdg_type == "wayland")
+    is_x11 = bool(x11_display or xdg_type == "x11")
+
+    gtk_available = False
+    atk_available = False
     try:
-        from pywinauto import Desktop
-    except ImportError as exc:
-        raise WorkflowError("install Windows UI Automation support: pip install 'human2api[accessibility]'") from exc
-    return Desktop(backend="uia")
+        import gi
+
+        gi.require_version("Atk", "1.0")
+        gi.require_version("GIRepository", "2.0")
+        from gi.repository import Atk, GIRepository  # noqa: F401
+
+        repo = GIRepository.Repository.get_default()
+        gtk_versions = repo.enumerate_versions("Gtk")
+        gtk_available = "3.0" in gtk_versions
+        atk_available = True
+    except Exception:
+        pass
+
+    return {
+        "platform": sys_platform_name(),
+        "is_wayland": is_wayland,
+        "is_x11": is_x11,
+        "display": x11_display or wayland_display,
+        "wayland_global_coordinate_restriction": is_wayland,
+        "gtk_atk_available": gtk_available and atk_available,
+        "xdotool_available": _which("xdotool") is not None,
+        "xvnc_available": _which("Xvnc") is not None,
+    }
 
 
-def _element_info(control: Any, field: str) -> str:
-    return str(getattr(control.element_info, field, "") or "")
-
-
-def locate_control(step: dict[str, Any]) -> Any:
-    """Fail closed for ambiguous/hidden controls; never choose the first match."""
-    windows = [w for w in _desktop().windows(title=step["windowTitle"]) if w.is_visible()]
-    if len(windows) != 1:
-        raise WorkflowError(f"accessibility window must be unique and visible (matched {len(windows)})")
-    window = windows[0]
-    candidates = [window, *window.descendants()]
-    matching: list[Any] = []
-    for item in candidates[:3000]:
-        try:
-            if not item.is_visible():
-                continue
-            if step.get("automationId") and _element_info(item, "automation_id") != step["automationId"]:
-                continue
-            if step.get("name") and _element_info(item, "name") != step["name"]:
-                continue
-            if step.get("controlType") and _element_info(item, "control_type") != step["controlType"]:
-                continue
-            if getattr(item.element_info, "is_password", False):
-                raise WorkflowError("password inputs are not accessible to workflow selectors")
-            matching.append(item)
-        except WorkflowError:
-            raise
-        except (AttributeError, RuntimeError):
-            continue
-    if len(candidates) > 3000:
-        raise WorkflowError("accessibility tree exceeds safe inspection limit")
-    if len(matching) != 1:
-        raise WorkflowError(f"accessibility selector must match exactly one visible control (matched {len(matching)})")
-    return matching[0]
-
-
-def execute_ui_step(step: dict[str, Any], values: dict[str, Any], *, heal: bool = False, ai: bool = False, audit: list | None = None) -> str | None:
+def check_macos_ax_permission() -> Tuple[bool, str]:
+    """Verify official macOS Accessibility permission (AXIsProcessTrusted) without attempting any bypass."""
+    if platform.system().lower() != "darwin":
+        return False, "Not running on macOS (Darwin)."
     try:
-        item = locate_control(step)
-    except WorkflowError as exc:
-        # Never heal an ambiguous match, a password input, or an inaccessible window.
-        if not heal or "matched 0" not in str(exc) or "window" in str(exc):
-            raise
-        from .healing import recover_metadata
-        suggestion = recover_metadata(step, inspect_window(step["windowTitle"]), ai=ai)
-        if suggestion is None:
-            raise
-        repaired = {k: v for k, v in step.items() if k not in {"name", "automationId", "controlType"}}
-        repaired.update({k: v for k, v in suggestion.items() if k in {"name", "automationId", "controlType"} and v})
-        item = locate_control(repaired)
-        if audit is not None:
-            audit.append({"action": step["action"], "recovered": True, "reviewRequired": True})
-    action = step["action"]
-    if action == "ui_click":
-        if not item.is_enabled():
-            raise WorkflowError("accessibility control is disabled")
-        item.click_input()
-    elif action == "ui_fill":
-        if not item.is_enabled():
-            raise WorkflowError("accessibility control is disabled")
-        # UIA ValuePattern handles Unicode and avoids using the user's clipboard.
-        try:
-            item.set_edit_text(template(step["value"], values))
-        except (AttributeError, NotImplementedError) as exc:
-            raise WorkflowError("target control does not support native Unicode text input") from exc
-    elif action in {"ui_assert_text", "ui_extract_text"}:
-        value = item.window_text()
-        if action == "ui_assert_text":
-            if template(step["text"], values) not in value:
-                raise WorkflowError("expected accessibility text not present")
-        else:
-            return value[:10000]
-    else:
-        raise WorkflowError("unsupported accessibility action")
+        import ApplicationServices  # type: ignore
+
+        trusted = bool(ApplicationServices.AXIsProcessTrusted())
+        if not trusted:
+            return (
+                False,
+                "macOS Accessibility permission not granted. Enable this application in System Settings > Privacy & Security > Accessibility.",
+            )
+        return True, "macOS AXIsProcessTrusted verified."
+    except Exception as exc:
+        return False, f"macOS ApplicationServices unavailable: {exc}"
+
+
+def sys_platform_name() -> str:
+    sys_name = platform.system().lower()
+    if sys_name.startswith("win"):
+        return "windows-uia"
+    if sys_name == "darwin":
+        return "macos-ax"
+    return "linux-atspi"
+
+
+def _which(cmd: str) -> Optional[str]:
+    for p in os.environ.get("PATH", "").split(os.pathsep):
+        cand = os.path.join(p, cmd)
+        if os.path.isfile(cand) and os.access(cand, os.X_OK):
+            return cand
     return None
-
-
-def inspect_window(window_title: str, *, limit: int = 60) -> list[dict[str, str]]:
-    if not isinstance(window_title, str) or not 0 < len(window_title) <= 200:
-        raise WorkflowError("a window title is required")
-    if not 1 <= limit <= 300:
-        raise WorkflowError("limit must be between 1 and 300")
-    windows = [w for w in _desktop().windows(title=window_title) if w.is_visible()]
-    if len(windows) != 1:
-        raise WorkflowError("must select exactly one visible window")
-    results: list[dict[str, str]] = []
-    for item in windows[0].descendants():
-        if len(results) >= limit:
-            break
-        try:
-            if not item.is_visible() or getattr(item.element_info, "is_password", False):
-                continue
-            name = _element_info(item, "name")
-            identifier = _element_info(item, "automation_id")
-            role = _element_info(item, "control_type")
-            if name or identifier:
-                # Do not include live control values, Edit content, or screenshots.
-                results.append({"windowTitle": window_title, "name": name[:200], "automationId": identifier[:200], "controlType": role[:100]})
-        except (AttributeError, RuntimeError):
-            continue
-    return results
-
-
-def selector_at_point(x: int, y: int) -> dict[str, str] | None:
-    """Best-effort native accessibility selector for a user-clicked point; NEVER captures edit values.
-
-    Caller must explicitly opt in. If neither a stable automation ID nor a unique accessible name is available,
-    return None so the recorder can save its ordinary pixel click instead.
-    """
-    try:
-        item = _desktop().from_point(x, y)
-        if item is None or not item.is_visible() or getattr(item.element_info, "is_password", False):
-            return None
-        automation_id = _element_info(item, "automation_id")
-        window = item.top_level_parent()
-        title = _element_info(window, "name") or window.window_text()
-        if not 0 < len(title) <= 200 or len(automation_id) > 200:
-            return None
-        name = _element_info(item, "name")
-        if not automation_id and (not name or len(name) > 200):
-            return None
-        result = {"action": "ui_click", "windowTitle": title,
-                  "controlType": _element_info(item, "control_type")[:200] or "Custom"}
-        result.update({"automationId": automation_id} if automation_id else {"name": name})
-        locate_control(result)  # Do not record an ambiguous accessible name.
-        return result
-    except (AttributeError, RuntimeError, WorkflowError, OSError):
-        return None

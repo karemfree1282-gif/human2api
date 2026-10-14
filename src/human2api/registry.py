@@ -1,349 +1,639 @@
-"""Self-hosted signed workflow registry with publisher enrollment and revocation.
+"""SQLite-backed Marketplace & Tool Registry with Publisher Accounts, Key Pinning, Reviews, Yanking, Abuse Reports, and Audit Logs."""
 
-No workflow is ever executed by this service. An operator enrolls a publisher's
-independently verified public key. Uploads require a per-publisher bearer token
-AND a valid package signature under that key. Tokens are stored only as hashes.
-Bind loopback by default; put authenticated TLS ingress in front of deployments.
-"""
 from __future__ import annotations
 
-import argparse
-from contextlib import contextmanager
 import base64
 import hashlib
 import json
 import os
-import re
+import pathlib
 import secrets
 import sqlite3
-import tempfile
+import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from importlib.resources import files
-from pathlib import Path
-from typing import Any
-from urllib.parse import parse_qs, urlsplit
+from typing import Any, Dict, List, Optional, Tuple
 
-from .marketplace import inspect_package, MAX_PACKAGE
-from .models import WorkflowError, NAME_RE
-from .server_limits import BoundedHTTPServer, unique_security_headers
-
-PUBLISHER = re.compile(r"[a-z][a-z0-9_-]{2,62}\Z")
-VERSION = re.compile(r"(0|[1-9][0-9]{0,4})\.(0|[1-9][0-9]{0,4})\.(0|[1-9][0-9]{0,4})\Z")
-MAX_BODY = 750 * 1024
+from human2api.models import Workflow
+from human2api.trust import (
+    UntrustedPackageError,
+    unpack_and_verify_package_zip,
+    verify_package_signature,
+)
 
 
-def token_digest(token: str) -> str:
+def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-class Registry:
-    def __init__(self, directory: Path):
-        self.directory = Path(directory)
-        if self.directory.is_symlink():
-            raise WorkflowError("registry directory cannot be a symlink")
-        self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-        if os.name != "nt":
-            if self.directory.stat().st_uid != os.getuid():
-                raise WorkflowError("registry directory belongs to another user")
-            self.directory.chmod(0o700)
-        self.db_path = self.directory / "registry.sqlite3"
-        if self.db_path.is_symlink():
-            raise WorkflowError("registry database cannot be a symlink")
-        with self.connect() as db:
-            db.executescript('''
-                PRAGMA journal_mode=WAL;
-                CREATE TABLE IF NOT EXISTS publishers (
-                    name TEXT PRIMARY KEY, public_key TEXT NOT NULL,
-                    token_hash TEXT UNIQUE NOT NULL, revoked INTEGER NOT NULL DEFAULT 0);
-                CREATE TABLE IF NOT EXISTS packages (
-                    publisher TEXT NOT NULL, name TEXT NOT NULL, version TEXT NOT NULL,
-                    sha256 TEXT NOT NULL, manifest TEXT NOT NULL, content BLOB NOT NULL,
-                    created INTEGER NOT NULL, yanked INTEGER NOT NULL DEFAULT 0,
-                    PRIMARY KEY(publisher,name,version));
-                CREATE TABLE IF NOT EXISTS ratings (
-                    reviewer TEXT NOT NULL, publisher TEXT NOT NULL, name TEXT NOT NULL,
-                    stars INTEGER NOT NULL CHECK(stars BETWEEN 1 AND 5),
-                    PRIMARY KEY(reviewer,publisher,name));
-                CREATE TABLE IF NOT EXISTS audit (
-                    created INTEGER NOT NULL, actor TEXT NOT NULL, event TEXT NOT NULL, subject TEXT NOT NULL);
-            ''')
-        self.db_path.chmod(0o600)
+class ToolRegistry:
+    """Production Marketplace Registry with serialized SQLite transactions (`BEGIN IMMEDIATE`),
+    Ed25519 signature verification, version diffing, verified reviews, yanking, abuse reporting,
+    and tamper-evident administrative audit logs.
+    """
 
-    @contextmanager
-    def connect(self):
-        db = sqlite3.connect(self.db_path, timeout=10)
-        db.row_factory = sqlite3.Row
+    def __init__(self, db_path: pathlib.Path) -> None:
+        self.db_path = pathlib.Path(db_path)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._write_lock = threading.RLock()
+        self._init_db()
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(str(self.db_path), timeout=15.0, isolation_level=None)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA foreign_keys=ON;")
+        return conn
+
+    def _init_db(self) -> None:
+        with self._write_lock:
+            conn = self._connect()
+            try:
+                conn.executescript(
+                    """
+                    CREATE TABLE IF NOT EXISTS publishers (
+                        publisher_id TEXT PRIMARY KEY,
+                        display_name TEXT NOT NULL,
+                        public_key TEXT NOT NULL,
+                        token_hash TEXT NOT NULL,
+                        revoked INTEGER NOT NULL DEFAULT 0,
+                        created_at REAL NOT NULL
+                    );
+
+                    CREATE TABLE IF NOT EXISTS packages (
+                        tool_id TEXT NOT NULL,
+                        version TEXT NOT NULL,
+                        publisher_id TEXT NOT NULL,
+                        category TEXT NOT NULL DEFAULT 'general',
+                        target TEXT NOT NULL,
+                        description TEXT NOT NULL DEFAULT '',
+                        manifest_json TEXT NOT NULL,
+                        workflow_json TEXT NOT NULL,
+                        zip_blob BLOB NOT NULL,
+                        sha256 TEXT NOT NULL,
+                        yanked INTEGER NOT NULL DEFAULT 0,
+                        yank_reason TEXT DEFAULT '',
+                        published_at REAL NOT NULL,
+                        PRIMARY KEY (tool_id, version),
+                        FOREIGN KEY (publisher_id) REFERENCES publishers(publisher_id)
+                    );
+
+                    CREATE TABLE IF NOT EXISTS reviews (
+                        review_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        tool_id TEXT NOT NULL,
+                        version TEXT NOT NULL,
+                        reviewer_publisher_id TEXT NOT NULL,
+                        rating INTEGER NOT NULL CHECK(rating >= 1 AND rating <= 5),
+                        comment TEXT NOT NULL,
+                        created_at REAL NOT NULL
+                    );
+
+                    CREATE TABLE IF NOT EXISTS abuse_reports (
+                        report_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        tool_id TEXT NOT NULL,
+                        version TEXT NOT NULL,
+                        reporter TEXT NOT NULL,
+                        reason TEXT NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'open',
+                        created_at REAL NOT NULL
+                    );
+
+                    CREATE TABLE IF NOT EXISTS audit_logs (
+                        log_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        actor TEXT NOT NULL,
+                        event_type TEXT NOT NULL,
+                        target_id TEXT NOT NULL,
+                        details_json TEXT NOT NULL,
+                        prev_hash TEXT NOT NULL,
+                        entry_hash TEXT NOT NULL,
+                        created_at REAL NOT NULL
+                    );
+                    """
+                )
+            finally:
+                conn.close()
+
+    def _append_audit_in_tx(
+        self,
+        conn: sqlite3.Connection,
+        actor: str,
+        event_type: str,
+        target_id: str,
+        details: Dict[str, Any],
+    ) -> None:
+        row = conn.execute("SELECT entry_hash FROM audit_logs ORDER BY log_id DESC LIMIT 1").fetchone()
+        prev_hash = str(row["entry_hash"]) if row else "0" * 64
+        now = time.time()
+        details_str = json.dumps(details, ensure_ascii=False, sort_keys=True)
+        digest_input = f"{prev_hash}|{actor}|{event_type}|{target_id}|{details_str}|{now:.6f}".encode("utf-8")
+        entry_hash = hashlib.sha256(digest_input).hexdigest()
+        conn.execute(
+            """
+            INSERT INTO audit_logs (actor, event_type, target_id, details_json, prev_hash, entry_hash, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (actor, event_type, target_id, details_str, prev_hash, entry_hash, now),
+        )
+
+    def _authenticate_publisher_in_tx(self, conn: sqlite3.Connection, publisher_id: str, token: str) -> sqlite3.Row:
+        row = conn.execute(
+            "SELECT * FROM publishers WHERE publisher_id = ?",
+            (publisher_id,),
+        ).fetchone()
+        if row is None:
+            raise PermissionError(f"Unknown publisher_id: {publisher_id!r}")
+        if int(row["revoked"]) != 0:
+            raise PermissionError(f"Publisher account {publisher_id!r} has been revoked.")
+        expected_hash = str(row["token_hash"])
+        actual_hash = _hash_token(token or "")
+        if not secrets.compare_digest(expected_hash, actual_hash):
+            raise PermissionError("Invalid publisher authentication token.")
+        return row
+
+    def register_publisher(self, publisher_id: str, display_name: str, public_key_b64: str) -> str:
+        """Register a new publisher account and return their one-time plaintext API token."""
+        if not publisher_id or not publisher_id.strip():
+            raise ValueError("publisher_id cannot be empty.")
+        raw_token = f"h2apub_{secrets.token_urlsafe(24)}"
+        token_hash = _hash_token(raw_token)
+        with self._write_lock:
+            conn = self._connect()
+            try:
+                conn.execute("BEGIN IMMEDIATE;")
+                existing = conn.execute(
+                    "SELECT publisher_id FROM publishers WHERE publisher_id = ?",
+                    (publisher_id,),
+                ).fetchone()
+                if existing:
+                    conn.execute("ROLLBACK;")
+                    raise ValueError(f"Publisher {publisher_id!r} is already registered.")
+                conn.execute(
+                    """
+                    INSERT INTO publishers (publisher_id, display_name, public_key, token_hash, revoked, created_at)
+                    VALUES (?, ?, ?, ?, 0, ?)
+                    """,
+                    (publisher_id, display_name, public_key_b64, token_hash, time.time()),
+                )
+                self._append_audit_in_tx(
+                    conn,
+                    actor=publisher_id,
+                    event_type="publisher.register",
+                    target_id=publisher_id,
+                    details={"display_name": display_name, "public_key": public_key_b64},
+                )
+                conn.execute("COMMIT;")
+                return raw_token
+            except Exception:
+                try:
+                    conn.execute("ROLLBACK;")
+                except Exception:
+                    pass
+                raise
+            finally:
+                conn.close()
+
+    def rotate_publisher_key_and_token(
+        self,
+        publisher_id: str,
+        current_token: str,
+        new_public_key_b64: Optional[str] = None,
+    ) -> str:
+        """Rotate publisher API token (and optionally Ed25519 public key) under an exclusive SQLite write lock."""
+        new_token = f"h2apub_{secrets.token_urlsafe(24)}"
+        new_hash = _hash_token(new_token)
+        with self._write_lock:
+            conn = self._connect()
+            try:
+                conn.execute("BEGIN IMMEDIATE;")
+                pub_row = self._authenticate_publisher_in_tx(conn, publisher_id, current_token)
+                eff_pub_key = new_public_key_b64 or str(pub_row["public_key"])
+                conn.execute(
+                    "UPDATE publishers SET token_hash = ?, public_key = ? WHERE publisher_id = ?",
+                    (new_hash, eff_pub_key, publisher_id),
+                )
+                self._append_audit_in_tx(
+                    conn,
+                    actor=publisher_id,
+                    event_type="publisher.rotate_credentials",
+                    target_id=publisher_id,
+                    details={"key_rotated": bool(new_public_key_b64)},
+                )
+                conn.execute("COMMIT;")
+                return new_token
+            except Exception:
+                try:
+                    conn.execute("ROLLBACK;")
+                except Exception:
+                    pass
+                raise
+            finally:
+                conn.close()
+
+    def revoke_publisher(self, publisher_id: str, admin_actor: str = "admin", reason: str = "policy_violation") -> None:
+        with self._write_lock:
+            conn = self._connect()
+            try:
+                conn.execute("BEGIN IMMEDIATE;")
+                conn.execute("UPDATE publishers SET revoked = 1 WHERE publisher_id = ?", (publisher_id,))
+                conn.execute(
+                    "UPDATE packages SET yanked = 1, yank_reason = ? WHERE publisher_id = ?",
+                    (f"Publisher revoked: {reason}", publisher_id),
+                )
+                self._append_audit_in_tx(
+                    conn,
+                    actor=admin_actor,
+                    event_type="publisher.revoke",
+                    target_id=publisher_id,
+                    details={"reason": reason},
+                )
+                conn.execute("COMMIT;")
+            finally:
+                conn.close()
+
+    def publish_package(
+        self,
+        publisher_id: str,
+        token: str,
+        zip_bytes: bytes,
+        category: str = "automation",
+    ) -> Dict[str, Any]:
+        """Verify Ed25519 signature against registered publisher key and store immutable version."""
+        with self._write_lock:
+            conn = self._connect()
+            try:
+                conn.execute("BEGIN IMMEDIATE;")
+                pub_row = self._authenticate_publisher_in_tx(conn, publisher_id, token)
+                trusted_key = str(pub_row["public_key"])
+                manifest, wf = unpack_and_verify_package_zip(zip_bytes, trusted_public_key_b64=trusted_key)
+                if manifest["publisher_id"] != publisher_id:
+                    raise PermissionError("Package manifest publisher_id does not match authenticated publisher.")
+                tool_id = str(manifest["tool_id"])
+                version = str(manifest["version"])
+
+                # Ensure tool_id ownership isn't hijacked by another publisher
+                owner_row = conn.execute(
+                    "SELECT DISTINCT publisher_id FROM packages WHERE tool_id = ?",
+                    (tool_id,),
+                ).fetchone()
+                if owner_row and str(owner_row["publisher_id"]) != publisher_id:
+                    raise PermissionError(f"Tool {tool_id!r} is owned by another publisher.")
+
+                dup = conn.execute(
+                    "SELECT 1 FROM packages WHERE tool_id = ? AND version = ?",
+                    (tool_id, version),
+                ).fetchone()
+                if dup:
+                    raise ValueError(f"Package {tool_id}@{version} already exists (versions are immutable).")
+
+                pkg_sha256 = hashlib.sha256(zip_bytes).hexdigest()
+                now = time.time()
+                conn.execute(
+                    """
+                    INSERT INTO packages (
+                        tool_id, version, publisher_id, category, target, description,
+                        manifest_json, workflow_json, zip_blob, sha256, yanked, published_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+                    """,
+                    (
+                        tool_id,
+                        version,
+                        publisher_id,
+                        category,
+                        wf.target,
+                        wf.description or wf.name,
+                        json.dumps(manifest, ensure_ascii=False),
+                        wf.to_json(indent=2),
+                        sqlite3.Binary(zip_bytes),
+                        pkg_sha256,
+                        now,
+                    ),
+                )
+                self._append_audit_in_tx(
+                    conn,
+                    actor=publisher_id,
+                    event_type="package.publish",
+                    target_id=f"{tool_id}@{version}",
+                    details={"sha256": pkg_sha256, "category": category, "target": wf.target},
+                )
+                conn.execute("COMMIT;")
+                return {
+                    "tool_id": tool_id,
+                    "version": version,
+                    "publisher_id": publisher_id,
+                    "sha256": pkg_sha256,
+                    "target": wf.target,
+                    "category": category,
+                }
+            except Exception:
+                try:
+                    conn.execute("ROLLBACK;")
+                except Exception:
+                    pass
+                raise
+            finally:
+                conn.close()
+
+    def yank_package(self, publisher_id: str, token: str, tool_id: str, version: str, reason: str = "security") -> None:
+        """Yank/withdraw a broken or malicious package version under SQLite write lock."""
+        with self._write_lock:
+            conn = self._connect()
+            try:
+                conn.execute("BEGIN IMMEDIATE;")
+                self._authenticate_publisher_in_tx(conn, publisher_id, token)
+                row = conn.execute(
+                    "SELECT publisher_id FROM packages WHERE tool_id = ? AND version = ?",
+                    (tool_id, version),
+                ).fetchone()
+                if row is None:
+                    raise KeyError(f"Package {tool_id}@{version} not found.")
+                if str(row["publisher_id"]) != publisher_id:
+                    raise PermissionError("Cannot yank a package owned by another publisher.")
+                conn.execute(
+                    "UPDATE packages SET yanked = 1, yank_reason = ? WHERE tool_id = ? AND version = ?",
+                    (reason, tool_id, version),
+                )
+                self._append_audit_in_tx(
+                    conn,
+                    actor=publisher_id,
+                    event_type="package.yank",
+                    target_id=f"{tool_id}@{version}",
+                    details={"reason": reason},
+                )
+                conn.execute("COMMIT;")
+            except Exception:
+                try:
+                    conn.execute("ROLLBACK;")
+                except Exception:
+                    pass
+                raise
+            finally:
+                conn.close()
+
+    def add_review(
+        self,
+        reviewer_publisher_id: str,
+        token: str,
+        tool_id: str,
+        version: str,
+        rating: int,
+        comment: str,
+    ) -> Dict[str, Any]:
+        """Add an authenticated review (re-verifying reviewer publisher token and revocation state inside write lock)."""
+        if not (1 <= int(rating) <= 5):
+            raise ValueError("Rating must be between 1 and 5.")
+        with self._write_lock:
+            conn = self._connect()
+            try:
+                conn.execute("BEGIN IMMEDIATE;")
+                self._authenticate_publisher_in_tx(conn, reviewer_publisher_id, token)
+                pkg = conn.execute(
+                    "SELECT yanked FROM packages WHERE tool_id = ? AND version = ?",
+                    (tool_id, version),
+                ).fetchone()
+                if pkg is None:
+                    raise KeyError(f"Package {tool_id}@{version} not found.")
+                if int(pkg["yanked"]) != 0:
+                    raise ValueError("Cannot review a yanked package version.")
+                now = time.time()
+                conn.execute(
+                    """
+                    INSERT INTO reviews (tool_id, version, reviewer_publisher_id, rating, comment, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (tool_id, version, reviewer_publisher_id, int(rating), comment.strip(), now),
+                )
+                self._append_audit_in_tx(
+                    conn,
+                    actor=reviewer_publisher_id,
+                    event_type="package.review",
+                    target_id=f"{tool_id}@{version}",
+                    details={"rating": int(rating)},
+                )
+                conn.execute("COMMIT;")
+                return {
+                    "tool_id": tool_id,
+                    "version": version,
+                    "reviewer": reviewer_publisher_id,
+                    "rating": int(rating),
+                    "comment": comment.strip(),
+                }
+            except Exception:
+                try:
+                    conn.execute("ROLLBACK;")
+                except Exception:
+                    pass
+                raise
+            finally:
+                conn.close()
+
+    def report_suspicious_tool(self, tool_id: str, version: str, reporter: str, reason: str) -> Dict[str, Any]:
+        if not reason or not reason.strip():
+            raise ValueError("Abuse report reason cannot be empty.")
+        with self._write_lock:
+            conn = self._connect()
+            try:
+                conn.execute("BEGIN IMMEDIATE;")
+                now = time.time()
+                cur = conn.execute(
+                    """
+                    INSERT INTO abuse_reports (tool_id, version, reporter, reason, status, created_at)
+                    VALUES (?, ?, ?, ?, 'open', ?)
+                    """,
+                    (tool_id, version, reporter, reason.strip(), now),
+                )
+                report_id = cur.lastrowid
+                self._append_audit_in_tx(
+                    conn,
+                    actor=reporter,
+                    event_type="package.abuse_report",
+                    target_id=f"{tool_id}@{version}",
+                    details={"report_id": report_id, "reason": reason.strip()},
+                )
+                conn.execute("COMMIT;")
+                return {"report_id": report_id, "tool_id": tool_id, "version": version, "status": "open"}
+            finally:
+                conn.close()
+
+    def search_packages(
+        self,
+        query: str = "",
+        category: Optional[str] = None,
+        target: Optional[str] = None,
+        include_yanked: bool = False,
+    ) -> List[Dict[str, Any]]:
+        conn = self._connect()
         try:
-            with db:
-                yield db
+            sql = """
+            SELECT p.tool_id, p.version, p.publisher_id, p.category, p.target, p.description,
+                   p.sha256, p.yanked, p.yank_reason, p.published_at, p.workflow_json,
+                   COALESCE(AVG(r.rating), 0.0) AS avg_rating,
+                   COUNT(r.review_id) AS review_count
+            FROM packages p
+            LEFT JOIN reviews r ON p.tool_id = r.tool_id AND p.version = r.version
+            WHERE 1=1
+            """
+            params: List[Any] = []
+            if not include_yanked:
+                sql += " AND p.yanked = 0"
+            if query:
+                sql += " AND (p.tool_id LIKE ? OR p.description LIKE ?)"
+                q_like = f"%{query}%"
+                params.extend([q_like, q_like])
+            if category:
+                sql += " AND p.category = ?"
+                params.append(category)
+            if target:
+                sql += " AND p.target = ?"
+                params.append(target)
+            sql += " GROUP BY p.tool_id, p.version ORDER BY p.published_at DESC"
+            rows = conn.execute(sql, params).fetchall()
+            results: List[Dict[str, Any]] = []
+            for row in rows:
+                wf_data = json.loads(row["workflow_json"])
+                results.append(
+                    {
+                        "tool_id": row["tool_id"],
+                        "version": row["version"],
+                        "publisher_id": row["publisher_id"],
+                        "category": row["category"],
+                        "target": row["target"],
+                        "description": row["description"],
+                        "sha256": row["sha256"],
+                        "yanked": bool(row["yanked"]),
+                        "yank_reason": row["yank_reason"],
+                        "avg_rating": round(float(row["avg_rating"]), 2),
+                        "review_count": int(row["review_count"]),
+                        "permissions": {
+                            "mode": wf_data.get("mode", "read"),
+                            "networkPolicy": wf_data.get("networkPolicy", "strict"),
+                            "allowedHosts": wf_data.get("allowedHosts", []),
+                            "allowedApps": wf_data.get("allowedApps", []),
+                            "allowedPackages": wf_data.get("allowedPackages", []),
+                        },
+                    }
+                )
+            return results
         finally:
-            db.close()
+            conn.close()
 
-    @staticmethod
-    def audit(db: sqlite3.Connection, actor: str, event: str, subject: str) -> None:
-        db.execute("INSERT INTO audit VALUES (?,?,?,?)", (int(time.time()), actor, event, subject))
-        db.execute("DELETE FROM audit WHERE rowid IN (SELECT rowid FROM audit ORDER BY rowid DESC LIMIT -1 OFFSET 10000)")
-
-    def enroll(self, name: str, public_key: Path) -> str:
-        from cryptography.hazmat.primitives import serialization
-        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-        if not PUBLISHER.fullmatch(name):
-            raise WorkflowError("publisher must be 3-63 lowercase letters/digits, underscores or hyphens")
-        if public_key.is_symlink() or public_key.stat().st_size > 4096:
-            raise WorkflowError("invalid publisher key file")
-        key = serialization.load_pem_public_key(public_key.read_bytes())
-        if not isinstance(key, Ed25519PublicKey):
-            raise WorkflowError("publisher key must be Ed25519")
-        raw = key.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
-        token = secrets.token_urlsafe(32)
+    def get_package_details(self, tool_id: str, version: Optional[str] = None) -> Dict[str, Any]:
+        conn = self._connect()
         try:
-            with self.connect() as db:
-                db.execute("INSERT INTO publishers(name,public_key,token_hash) VALUES(?,?,?)", (name, base64.b64encode(raw).decode(), token_digest(token)))
-                self.audit(db, "operator", "enroll", name)
-        except sqlite3.IntegrityError as exc:
-            raise WorkflowError("publisher already enrolled; do not overwrite identities") from exc
-        return token
+            if version:
+                row = conn.execute(
+                    "SELECT * FROM packages WHERE tool_id = ? AND version = ?",
+                    (tool_id, version),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT * FROM packages WHERE tool_id = ? AND yanked = 0 ORDER BY published_at DESC LIMIT 1",
+                    (tool_id,),
+                ).fetchone()
+            if row is None:
+                raise KeyError(f"Package {tool_id!r} (version={version or 'latest'}) not found.")
+            wf_data = json.loads(row["workflow_json"])
+            manifest_data = json.loads(row["manifest_json"])
+            revs = conn.execute(
+                "SELECT reviewer_publisher_id, rating, comment, created_at FROM reviews WHERE tool_id = ? AND version = ? ORDER BY created_at DESC",
+                (row["tool_id"], row["version"]),
+            ).fetchall()
+            return {
+                "tool_id": row["tool_id"],
+                "version": row["version"],
+                "publisher_id": row["publisher_id"],
+                "category": row["category"],
+                "target": row["target"],
+                "description": row["description"],
+                "sha256": row["sha256"],
+                "yanked": bool(row["yanked"]),
+                "yank_reason": row["yank_reason"],
+                "manifest": manifest_data,
+                "workflow": wf_data,
+                "permissions": {
+                    "mode": wf_data.get("mode", "read"),
+                    "networkPolicy": wf_data.get("networkPolicy", "strict"),
+                    "allowedHosts": wf_data.get("allowedHosts", []),
+                    "allowedApps": wf_data.get("allowedApps", []),
+                    "allowedPackages": wf_data.get("allowedPackages", []),
+                },
+                "reviews": [dict(r) for r in revs],
+            }
+        finally:
+            conn.close()
 
-    def authenticate(self, token: str) -> str:
-        if not 30 <= len(token) <= 200:
-            raise WorkflowError("invalid publisher token")
-        with self.connect() as db:
-            row = db.execute("SELECT name FROM publishers WHERE token_hash=? AND revoked=0", (token_digest(token),)).fetchone()
-        if row is None:
-            raise WorkflowError("invalid or revoked publisher token")
-        return row["name"]
-
-    @staticmethod
-    def _active_writer(db: sqlite3.Connection, name: str, token: str) -> None:
-        """Recheck authorization under the write lock, not just before it."""
-        if db.execute("SELECT 1 FROM publishers WHERE name=? AND token_hash=? AND revoked=0",
-                      (name, token_digest(token))).fetchone() is None:
-            raise WorkflowError("publisher token was revoked or rotated before the write")
-
-    def rotate_token(self, name: str) -> str:
-        token = secrets.token_urlsafe(32)
-        with self.connect() as db:
-            if not db.execute("UPDATE publishers SET token_hash=? WHERE name=? AND revoked=0", (token_digest(token),name)).rowcount:
-                raise WorkflowError("publisher not found or revoked")
-            self.audit(db, "operator", "rotate-token", name)
-        return token
-
-    def revoke(self, name: str) -> None:
-        with self.connect() as db:
-            if not db.execute("UPDATE publishers SET revoked=1 WHERE name=?", (name,)).rowcount:
-                raise WorkflowError("publisher not found")
-            self.audit(db, "operator", "revoke", name)
-
-    def publish(self, token: str, version: str, content: bytes) -> dict[str, Any]:
-        publisher = self.authenticate(token)
-        if not VERSION.fullmatch(version) or not 0 < len(content) <= MAX_PACKAGE:
-            raise WorkflowError("invalid version or package size")
-        with tempfile.TemporaryDirectory(prefix="h2a-registry-") as tmp:
-            path = Path(tmp) / "package.h2a.zip"
-            path.write_bytes(content)
-            manifest, _ = inspect_package(path)
-        if manifest["packageVersion"] != 2 or manifest["publisher"] != publisher:
-            raise WorkflowError("uploads require a signed package for the authenticated publisher")
-        if manifest.get("releaseVersion") != version:
-            raise WorkflowError("published version must match the signed releaseVersion; use pack --release-version")
-        digest = hashlib.sha256(content).hexdigest()
-        with self.connect() as db:
-            db.execute("BEGIN IMMEDIATE")
-            row = db.execute("SELECT public_key FROM publishers WHERE name=? AND revoked=0 AND token_hash=?", (publisher,token_digest(token))).fetchone()
-            if row is None or not secrets.compare_digest(row["public_key"], manifest["publicKey"]):
-                raise WorkflowError("package signer is not the enrolled publisher")
-            try:
-                db.execute("INSERT INTO packages(publisher,name,version,sha256,manifest,content,created) VALUES(?,?,?,?,?,?,?)",
-                           (publisher,manifest["name"],version,digest,json.dumps(manifest),content,int(time.time())))
-            except sqlite3.IntegrityError as exc:
-                raise WorkflowError("version already exists; published releases are immutable") from exc
-            self.audit(db,publisher,"publish",manifest["name"]+"@"+version)
-        return {"publisher":publisher,"name":manifest["name"],"version":version,"sha256":digest}
-
-    def catalog(self, query: str = "") -> list[dict[str, Any]]:
-        if len(query) > 100:
-            raise WorkflowError("search query too long")
-        with self.connect() as db:
-            rows=db.execute("SELECT p.publisher,p.name,p.version,p.sha256,p.manifest,p.created FROM packages p JOIN publishers a ON p.publisher=a.name WHERE p.yanked=0 AND a.revoked=0 ORDER BY p.created DESC LIMIT 1000").fetchall()
-            ratings=db.execute("SELECT r.publisher,r.name,avg(r.stars),count(*) FROM ratings r JOIN publishers a ON r.reviewer=a.name WHERE a.revoked=0 GROUP BY r.publisher,r.name").fetchall()
-        scores={(r[0],r[1]):(r[2],r[3]) for r in ratings}
-        result=[]
-        for row in rows:
-            manifest=json.loads(row["manifest"])
-            if query.lower() not in (row["name"]+" "+manifest["description"]+" "+row["publisher"]).lower():
-                continue
-            score,count=scores.get((row["publisher"],row["name"]),(None,0))
-            result.append({"publisher":row["publisher"],"name":row["name"],"version":row["version"],"sha256":row["sha256"],
-                "description":manifest["description"],"target":manifest["target"],"publicKey":manifest["publicKey"],
-                "stars":score,"reviewCount":count,"createdAt":row["created"]})
-        return result
-
-    def download(self, publisher: str, name: str, version: str) -> bytes:
-        with self.connect() as db:
-            row=db.execute("SELECT p.content FROM packages p JOIN publishers a ON a.name=p.publisher WHERE p.publisher=? AND p.name=? AND p.version=? AND p.yanked=0 AND a.revoked=0", (publisher,name,version)).fetchone()
-        if row is None:
-            raise WorkflowError("package not found or revoked")
-        return bytes(row[0])
-
-    def yank(self, token: str, name: str, version: str) -> None:
-        publisher=self.authenticate(token)
-        with self.connect() as db:
-            db.execute("BEGIN IMMEDIATE")
-            self._active_writer(db, publisher, token)
-            if not db.execute("UPDATE packages SET yanked=1 WHERE publisher=? AND name=? AND version=?",(publisher,name,version)).rowcount:
-                raise WorkflowError("package not found")
-            self.audit(db,publisher,"yank",name+"@"+version)
-
-    def rate(self, token: str, publisher: str, name: str, stars: int) -> None:
-        reviewer=self.authenticate(token)
-        if reviewer==publisher or type(stars) is not int or not 1<=stars<=5:
-            raise WorkflowError("invalid rating or self-review")
-        with self.connect() as db:
-            db.execute("BEGIN IMMEDIATE")
-            self._active_writer(db, reviewer, token)
-            if not db.execute("SELECT 1 FROM packages p JOIN publishers a ON a.name=p.publisher WHERE p.publisher=? AND p.name=? AND p.yanked=0 AND a.revoked=0",(publisher,name)).fetchone():
-                raise WorkflowError("package not found")
-            db.execute("INSERT INTO ratings VALUES(?,?,?,?) ON CONFLICT(reviewer,publisher,name) DO UPDATE SET stars=excluded.stars",(reviewer,publisher,name,stars))
-            self.audit(db,reviewer,"rate",publisher+"/"+name)
-
-
-class RegistryHandler(BaseHTTPRequestHandler):
-    def log_message(self,*args: Any) -> None:
-        return  # no credentials, package data, query strings, or input payloads in logs
-
-    def reply(self,code: int,value: Any,kind: str = "application/json") -> None:
-        data=value if isinstance(value,bytes) else json.dumps(value,ensure_ascii=False).encode("utf-8")
-        self.send_response(code)
-        for key,val in {"Content-Type":kind,"Content-Length":str(len(data)),"Cache-Control":"no-store",
-                        "X-Content-Type-Options":"nosniff","Content-Security-Policy":"default-src 'self'; script-src 'self'; style-src 'self'; frame-ancestors 'none'; object-src 'none'"}.items():
-            self.send_header(key,val)
-        self.end_headers();self.wfile.write(data)
-
-    def trusted_origin(self) -> bool:
-        if not unique_security_headers(self.headers):
-            return False
-        expected=self.server.public_origin
-        parsed=urlsplit(expected)
-        return self.headers.get("Host")==parsed.netloc and self.headers.get("Origin",expected)==expected
-
-    def do_GET(self) -> None:
-        if not self.trusted_origin():
-            return self.reply(403,{"error":"invalid Host/Origin"})
-        route=urlsplit(self.path)
+    def download_package_bytes(self, tool_id: str, version: Optional[str] = None) -> Tuple[bytes, Dict[str, Any]]:
+        conn = self._connect()
         try:
-            if route.path in {"/","/registry.js","/editor.css"}:
-                name,kind={"/":("registry.html","text/html; charset=utf-8"),"/registry.js":("registry.js","application/javascript"),"/editor.css":("editor.css","text/css")}[route.path]
-                return self.reply(200,files("human2api").joinpath("static",name).read_bytes(),kind)
-            if route.path=="/health":
-                from . import __version__
-                return self.reply(200,{"status":"ok","version":__version__,"service":"human2api-registry"})
-            if route.path=="/v1/packages":
-                query=parse_qs(route.query).get("q",[""])[0]
-                return self.reply(200,{"packages":self.server.store.catalog(query)})
-            parts=route.path.strip("/").split("/")
-            if len(parts)==5 and parts[:2]==["v1","packages"]:
-                return self.reply(200,self.server.store.download(*parts[2:]),"application/zip")
-            return self.reply(404,{"error":"not found"})
-        except (WorkflowError,ValueError,OSError):
-            return self.reply(400,{"error":"request could not be completed"})
+            if version:
+                row = conn.execute(
+                    "SELECT * FROM packages WHERE tool_id = ? AND version = ?",
+                    (tool_id, version),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT * FROM packages WHERE tool_id = ? AND yanked = 0 ORDER BY published_at DESC LIMIT 1",
+                    (tool_id,),
+                ).fetchone()
+            if row is None:
+                raise KeyError(f"Package {tool_id!r} not found.")
+            if int(row["yanked"]) != 0:
+                raise PermissionError(f"Package {tool_id}@{row['version']} has been yanked ({row['yank_reason']}).")
+            pub_row = conn.execute(
+                "SELECT public_key, revoked FROM publishers WHERE publisher_id = ?",
+                (row["publisher_id"],),
+            ).fetchone()
+            if pub_row is None or int(pub_row["revoked"]) != 0:
+                raise PermissionError(f"Publisher {row['publisher_id']!r} is revoked or invalid.")
+            return bytes(row["zip_blob"]), {
+                "tool_id": row["tool_id"],
+                "version": row["version"],
+                "publisher_id": row["publisher_id"],
+                "public_key": pub_row["public_key"],
+                "sha256": row["sha256"],
+            }
+        finally:
+            conn.close()
 
-    def do_POST(self) -> None:
-        if not self.trusted_origin():
-            return self.reply(403,{"error":"invalid Host/Origin"})
+    def diff_versions(self, tool_id: str, version_a: str, version_b: str) -> Dict[str, Any]:
+        """Compare permissions, inputs, and steps between two versions of a tool before upgrading."""
+        det_a = self.get_package_details(tool_id, version_a)
+        det_b = self.get_package_details(tool_id, version_b)
+        wf_a = det_a["workflow"]
+        wf_b = det_b["workflow"]
+
+        hosts_added = sorted(set(wf_b.get("allowedHosts", [])) - set(wf_a.get("allowedHosts", [])))
+        apps_added = sorted(set(wf_b.get("allowedApps", [])) - set(wf_a.get("allowedApps", [])))
+        pkgs_added = sorted(set(wf_b.get("allowedPackages", [])) - set(wf_a.get("allowedPackages", [])))
+        inputs_added = sorted(set((wf_b.get("inputs") or {}).keys()) - set((wf_a.get("inputs") or {}).keys()))
+        mode_changed = wf_a.get("mode") != wf_b.get("mode")
+
+        return {
+            "tool_id": tool_id,
+            "from_version": version_a,
+            "to_version": version_b,
+            "mode_changed": mode_changed,
+            "old_mode": wf_a.get("mode"),
+            "new_mode": wf_b.get("mode"),
+            "hosts_added": hosts_added,
+            "apps_added": apps_added,
+            "packages_added": pkgs_added,
+            "inputs_added": inputs_added,
+            "step_count_delta": len(wf_b.get("steps", [])) - len(wf_a.get("steps", [])),
+            "privilege_expanded": bool(hosts_added or apps_added or pkgs_added or (mode_changed and wf_b.get("mode") == "write")),
+        }
+
+    def list_audit_logs(self) -> List[Dict[str, Any]]:
+        conn = self._connect()
         try:
-            auth=self.headers.get("Authorization","")
-            if not auth.startswith("Bearer "):
-                return self.reply(401,{"error":"publisher authentication required"})
-            token=auth[7:]
-            try:
-                self.server.store.authenticate(token)
-            except WorkflowError:
-                return self.reply(401,{"error":"invalid or revoked token"})
-            if self.headers.get("Transfer-Encoding") or len(self.headers.get_all("Content-Length",[]))!=1:
-                raise WorkflowError("invalid body framing")
-            length=int(self.headers["Content-Length"])
-            if not 0<length<=MAX_BODY:
-                raise WorkflowError("invalid body size")
-            self.connection.settimeout(15)
-            body=json.loads(self.rfile.read(length))
-            if not isinstance(body,dict):
-                raise WorkflowError("body must be an object")
-            path=urlsplit(self.path).path
-            if path=="/v1/publish":
-                result=self.server.store.publish(token,body["version"],base64.b64decode(body["package"],validate=True))
-                return self.reply(201,result)
-            if path=="/v1/yank":
-                self.server.store.yank(token,body["name"],body["version"])
-                return self.reply(200,{"yanked":True})
-            if path=="/v1/ratings":
-                self.server.store.rate(token,body["publisher"],body["name"],body["stars"])
-                return self.reply(200,{"saved":True})
-            return self.reply(404,{"error":"not found"})
-        except (WorkflowError,ValueError,KeyError,TypeError,OSError):
-            return self.reply(400,{"error":"invalid package, signature, scope or request"})
+            rows = conn.execute("SELECT * FROM audit_logs ORDER BY log_id ASC").fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
 
-
-def make_registry(directory: Path, port: int = 8770, *, host: str = "127.0.0.1", public_origin: str | None = None) -> ThreadingHTTPServer:
-    if host not in {"127.0.0.1","0.0.0.0"}:
-        raise WorkflowError("registry host must be loopback or explicit container bind 0.0.0.0")
-    if host=="0.0.0.0" and (public_origin is None or urlsplit(public_origin).scheme!="https"):
-        raise WorkflowError("container/public binding requires an HTTPS public origin and reverse proxy")
-    if public_origin:
-        parsed = urlsplit(public_origin)
-        if parsed.scheme not in {"https", "http"} or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in {"", "/"}:
-            raise WorkflowError("public origin must be a root HTTP(S) origin without credentials")
-        if parsed.scheme == "http" and parsed.hostname not in {"127.0.0.1", "localhost"}:
-            raise WorkflowError("non-loopback public origin requires HTTPS")
-    store=Registry(directory)
-    server=BoundedHTTPServer((host,port),RegistryHandler)
-    server.store=store
-    server.public_origin=(public_origin or f"http://127.0.0.1:{server.server_address[1]}").rstrip("/")
-    return server
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser=argparse.ArgumentParser(description="Human2API signed package registry")
-    parser.add_argument("action",choices=["serve","enroll","revoke","rotate-token","backup","restore","list"])
-    parser.add_argument("name",nargs="?")
-    parser.add_argument("--directory",type=Path,default=Path(".h2a/registry"))
-    parser.add_argument("--public-key",type=Path)
-    parser.add_argument("--port",type=int,default=8770)
-    parser.add_argument("--host",default="127.0.0.1")
-    parser.add_argument("--public-origin")
-    parser.add_argument("--file",type=Path)
-    args=parser.parse_args(argv)
-    try:
-        if args.action=="serve":
-            server=make_registry(args.directory,args.port,host=args.host,public_origin=args.public_origin)
-            print("Registry:",server.public_origin)
-            try: server.serve_forever()
-            except KeyboardInterrupt: pass
-            finally: server.server_close()
-        elif args.action=="restore":
-            if not args.file: raise WorkflowError("--file is required")
-            from .registry_backup import restore
-            restore(args.file,args.directory);print("Restored into a new private registry directory")
-        else:
-            store=Registry(args.directory)
-            if args.action=="enroll":
-                if not args.name or not args.public_key: raise WorkflowError("name and --public-key required")
-                print("Save this publisher token now; it is shown once:",store.enroll(args.name,args.public_key))
-            elif args.action=="backup":
-                if not args.file: raise WorkflowError("--file is required")
-                from .registry_backup import backup
-                print("Backup SHA-256:",backup(store,args.file))
-            elif args.action=="rotate-token":
-                if not args.name: raise WorkflowError("publisher name required")
-                print("Save this replacement token now:",store.rotate_token(args.name))
-            elif args.action=="revoke":
-                if not args.name: raise WorkflowError("publisher name required")
-                store.revoke(args.name);print("Publisher revoked")
-            else: print(json.dumps(store.catalog(),indent=2))
-        return 0
-    except (WorkflowError,OSError,ValueError) as exc:
-        print("Registry error:",exc);return 1
-
-
-if __name__=="__main__":
-    raise SystemExit(main())
+    def verify_audit_chain(self) -> bool:
+        logs = self.list_audit_logs()
+        prev = "0" * 64
+        for entry in logs:
+            if entry["prev_hash"] != prev:
+                return False
+            prev = entry["entry_hash"]
+        return True

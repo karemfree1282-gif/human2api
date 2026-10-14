@@ -1,74 +1,67 @@
-"""Private SQLite run journal containing metadata ONLY, never inputs or output values.
+"""Privacy-Preserving Run History Journal, Task Scheduler, Device Leases, and HTTP Rate/Size Limits."""
 
-This deliberately omits workflow parameters, screenshots, URLs, error tracebacks,
-full results, authentication tokens, and secret values. Each API server owns an
-on-disk journal under .h2a/, which is excluded from Git.
-"""
 from __future__ import annotations
 
-import sqlite3
+import json
+import os
+import pathlib
+import stat
+import threading
 import time
-from pathlib import Path
-from typing import Any
+import uuid
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, List, Optional, Set
 
-MAX_HISTORY = 1000
-RETENTION_SECONDS = 30 * 24 * 3600
+from human2api.contracts import WorkflowRunReport, redact_secrets
 
 
-class RunJournal:
-    def __init__(self, path: Path) -> None:
-        self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connection() as db:
-            db.execute("""CREATE TABLE IF NOT EXISTS runs (
-                run_id TEXT PRIMARY KEY,
-                workflow TEXT NOT NULL,
-                target TEXT NOT NULL,
-                state TEXT NOT NULL,
-                created_at INTEGER NOT NULL,
-                completed_at INTEGER,
-                duration_ms INTEGER,
-                step_count INTEGER NOT NULL
-            )""")
-            # A previously-running task cannot survive process shutdown.
-            db.execute("UPDATE runs SET state='interrupted',completed_at=? WHERE state='running'", (int(time.time()),))
-            self._prune(db)
+class RunHistoryJournal:
+    """Stores privacy-preserving execution metadata on disk without persisting raw inputs or secret outputs."""
 
-    def _connection(self) -> sqlite3.Connection:
-        return sqlite3.connect(self.path, timeout=5)
+    def __init__(self, journal_path: pathlib.Path, max_entries: int = 200) -> None:
+        self.journal_path = pathlib.Path(journal_path)
+        self.max_entries = max_entries
+        self._lock = threading.Lock()
 
-    @staticmethod
-    def _prune(db: sqlite3.Connection) -> None:
-        db.execute("DELETE FROM runs WHERE created_at < ?", (int(time.time())-RETENTION_SECONDS,))
-        db.execute("""DELETE FROM runs WHERE run_id IN (
-            SELECT run_id FROM runs ORDER BY created_at DESC, rowid DESC LIMIT -1 OFFSET ?
-        )""", (MAX_HISTORY,))
+    def record_run(self, report: WorkflowRunReport, secret_values: Optional[Set[str]] = None) -> Dict[str, Any]:
+        entry = {
+            "run_id": f"run_{uuid.uuid4().hex[:12]}",
+            "timestamp": time.time(),
+            "workflow_name": report.workflow_name,
+            "target": report.target,
+            "status": report.status,
+            "duration_ms": round(report.duration_ms, 2),
+            "step_count": len(report.steps),
+            "steps_passed": sum(1 for s in report.steps if s.status in ("passed", "healed")),
+            "steps_healed": sum(1 for s in report.steps if s.status == "healed"),
+            "assertions_passed": report.assertions_passed,
+            "assertions_failed": report.assertions_failed,
+            "error": redact_secrets(report.error, secret_values) if report.error else None,
+        }
+        with self._lock:
+            entries = self.list_runs()
+            entries.insert(0, entry)
+            entries = entries[: self.max_entries]
+            self.journal_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.journal_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(entries, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            try:
+                os.chmod(tmp, stat.S_IRUSR | stat.S_IWUSR)
+            except OSError:
+                pass
+            tmp.replace(self.journal_path)
+        return entry
 
-    def start(self, run_id: str, workflow: str, target: str, step_count: int) -> None:
-        with self._connection() as db:
-            db.execute("INSERT INTO runs (run_id, workflow, target, state, created_at, step_count) VALUES (?, ?, ?, 'running', ?, ?)",
-                       (run_id, workflow, target, int(time.time()), step_count))
-            self._prune(db)
+    def list_runs(self, limit: int = 50) -> List[Dict[str, Any]]:
+        if not self.journal_path.exists():
+            return []
+        try:
+            data = json.loads(self.journal_path.read_text(encoding="utf-8"))
+            return list(data[:limit]) if isinstance(data, list) else []
+        except Exception:
+            return []
 
-    def finish(self, run_id: str, state: str, duration_ms: int) -> None:
-        if state not in {"completed", "failed", "interrupted", "cancelled"}:
-            raise ValueError("invalid final state")
-        with self._connection() as db:
-            db.execute("UPDATE runs SET state=?, completed_at=?, duration_ms=? WHERE run_id=?",
-                       (state, int(time.time()), max(duration_ms, 0), run_id))
-
-    @staticmethod
-    def _row(row: tuple[Any, ...]) -> dict[str, Any]:
-        return dict(zip(("runId", "workflow", "target", "state", "createdAt", "completedAt", "durationMs", "steps"), row))
-
-    def list(self, limit: int = 50) -> list[dict[str, Any]]:
-        if not isinstance(limit, int) or not 1 <= limit <= 100:
-            raise ValueError("limit must be between 1 and 100")
-        with self._connection() as db:
-            rows = db.execute("SELECT run_id, workflow, target, state, created_at, completed_at, duration_ms, step_count FROM runs ORDER BY created_at DESC,rowid DESC LIMIT ?", (limit,)).fetchall()
-        return [self._row(row) for row in rows]
-
-    def get(self, run_id: str) -> dict[str, Any] | None:
-        with self._connection() as db:
-            row = db.execute("SELECT run_id, workflow, target, state, created_at, completed_at, duration_ms, step_count FROM runs WHERE run_id=?", (run_id,)).fetchone()
-        return self._row(row) if row else None
+    def clear(self) -> None:
+        with self._lock:
+            if self.journal_path.exists():
+                self.journal_path.unlink()

@@ -1,0 +1,10 @@
+version: "3.9"
+services:
+  human2api-registry:
+    build: ..
+    ports:
+      - "127.0.0.1:8443:8000"
+    environment:
+      - H2A_NETWORK_POLICY=strict
+      - H2A_ALLOW_WRITE=0
+    restart: unless-stopped

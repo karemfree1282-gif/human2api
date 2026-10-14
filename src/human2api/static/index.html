@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Human2API Studio — منصة أتمتة المهام الذكية</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <script>window.__H2A_TOKEN__ = "__H2A_BOOTSTRAP_TOKEN__";</script>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo-badge">H2A</span>
+      <div>
+        <h1 id="app-title" data-i18n="appTitle">Human2API Studio</h1>
+        <p id="app-subtitle" data-i18n="appSubtitle">علّم الكمبيوتر أو المتصفح أو الهاتف مهمة مرة واحدة، وحوّلها إلى API وأداة MCP</p>
+      </div>
+    </div>
+    <div class="top-controls">
+      <button id="btn-record-new" class="btn btn-primary" data-testid="btn-record-new">● <span data-i18n="recordNewTask">تسجيل مهمة جديدة</span></button>
+      <button id="btn-toggle-lang" class="btn btn-outline" data-testid="btn-toggle-lang">English / العربية</button>
+      <button id="btn-toggle-theme" class="btn btn-outline" data-testid="btn-toggle-theme">☀️ / 🌙</button>
+    </div>
+  </header>
+
+  <nav class="nav-tabs" role="tablist">
+    <button class="nav-tab active" data-tab="dashboard" data-testid="tab-dashboard" data-i18n="tabDashboard">لوحة التحكم (Dashboard)</button>
+    <button class="nav-tab" data-tab="editor" data-testid="tab-editor" data-i18n="tabEditor">محرر المهام البصري (Workflow Editor)</button>
+    <button class="nav-tab" data-tab="schedules" data-testid="tab-schedules" data-i18n="tabSchedules">المهام المجدولة (Schedules)</button>
+    <button class="nav-tab" data-tab="history" data-testid="tab-history" data-i18n="tabHistory">سجل التشغيل (History)</button>
+    <button class="nav-tab" data-tab="marketplace" data-testid="tab-marketplace" data-i18n="tabMarketplace">متجر الأدوات (Marketplace)</button>
+    <button class="nav-tab" data-tab="settings" data-testid="tab-settings" data-i18n="tabSettings">الخصوصية والصلاحيات (Privacy & Security)</button>
+  </nav>
+
+  <main class="container">
+    <!-- 1. Dashboard -->
+    <section id="panel-dashboard" class="tab-panel active">
+      <div class="stats-grid">
+        <div class="stat-card">
+          <span class="stat-label" data-i18n="statWorkflows">المهام المسجلة</span>
+          <strong id="stat-workflows-count" class="stat-value">0</strong>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label" data-i18n="statSchedules">المهام المجدولة</span>
+          <strong id="stat-schedules-count" class="stat-value">0</strong>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label" data-i18n="statPackages">الحزم المثبتة</span>
+          <strong id="stat-packages-count" class="stat-value">0</strong>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label" data-i18n="statVault">حالة خزنة الأسرار</span>
+          <strong id="stat-vault-state" class="stat-value">مقفلة (Locked)</strong>
+        </div>
+      </div>
+
+      <div class="panel-card">
+        <h2 data-i18n="quickRunHeading">تشغيل ومراقبة المهام الفورية</h2>
+        <div class="run-bar">
+          <select id="dashboard-workflow-select" data-testid="dashboard-workflow-select"></select>
+          <label class="checkbox-inline">
+            <input type="checkbox" id="chk-allow-write" data-testid="chk-allow-write" checked />
+            <span data-i18n="allowWriteLabel">موافقة على عمليات الكتابة (Write Approval)</span>
+          </label>
+          <button id="btn-run-selected" class="btn btn-success" data-testid="btn-run-selected">▶ <span data-i18n="runNow">تشغيل الآن</span></button>
+          <button id="btn-stop-run" class="btn btn-danger" data-testid="btn-stop-run">■ <span data-i18n="stopRun">إيقاف فوري</span></button>
+        </div>
+        <div id="live-progress-box" class="progress-box" data-testid="live-progress-box">
+          <span id="live-status-text">جاهز للتشغيل — اختر مهمة أو سجّل مهمة جديدة.</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. Visual Workflow Editor -->
+    <section id="panel-editor" class="tab-panel">
+      <div class="panel-card">
+        <h2 data-i18n="visualEditorHeading">محرر Workflow البصري (دون الحاجة لتعديل JSON)</h2>
+        <div class="form-row">
+          <input id="wf-name-input" data-testid="wf-name-input" placeholder="اسم المهمة (Workflow Name)" value="إصدار فاتورة تلقائية" />
+          <select id="wf-target-select" data-testid="wf-target-select">
+            <option value="browser">المتصفح (Browser - Playwright/Chromium)</option>
+            <option value="windows-uia">سطح مكتب Windows (UI Automation)</option>
+            <option value="macos-ax">سطح مكتب macOS (AX Accessibility)</option>
+            <option value="linux-atspi">سطح مكتب Linux (AT-SPI / GTK)</option>
+            <option value="android-companion">هاتف Android (Accessibility Companion)</option>
+          </select>
+          <input id="wf-hosts-input" data-testid="wf-hosts-input" placeholder="النطاقات/التطبيقات المسموحة (مثال: 127.0.0.1, 127.0.0.2)" value="127.0.0.1, 127.0.0.2" />
+        </div>
+
+        <h3 data-i18n="stepsHeading">الخطوات (Steps) — إضافة وحذف وإعادة ترتيب</h3>
+        <div class="form-row">
+          <select id="new-step-action" data-testid="new-step-action">
+            <option value="goto">انتقال إلى رابط (goto)</option>
+            <option value="click">نقر على عنصر (click)</option>
+            <option value="type">كتابة نص / متغير (type)</option>
+            <option value="select">اختيار من قائمة (select)</option>
+            <option value="assert_text">التحقق من نص النتيجة (assert_text)</option>
+          </select>
+          <input id="new-step-selector" data-testid="new-step-selector" placeholder="المحدد أو الرابط (مثال: #customer-name أو /demo)" />
+          <input id="new-step-value" data-testid="new-step-value" placeholder="القيمة أو المتغير (مثال: ${input:customer})" />
+          <button id="btn-add-step" class="btn btn-primary" data-testid="btn-add-step">+ إضافة خطوة</button>
+        </div>
+
+        <ul id="editor-steps-list" class="steps-list" data-testid="editor-steps-list"></ul>
+
+        <h3 data-i18n="inputsHeading">المدخلات والمتغيرات (Inputs & Variables)</h3>
+        <div class="form-row">
+          <input id="new-input-name" data-testid="new-input-name" placeholder="اسم المتغير (مثال: customer)" />
+          <select id="new-input-type" data-testid="new-input-type">
+            <option value="string">نص عادي (string)</option>
+            <option value="secret">قيمة سرية / كلمة مرور (secret)</option>
+            <option value="number">رقم (number)</option>
+            <option value="file">ملف (file)</option>
+          </select>
+          <input id="new-input-default" data-testid="new-input-default" placeholder="القيمة الافتراضية (تُحجب للأسرار)" />
+          <button id="btn-add-input" class="btn btn-outline" data-testid="btn-add-input">+ إضافة متغير</button>
+        </div>
+        <ul id="editor-inputs-list" class="steps-list" data-testid="editor-inputs-list"></ul>
+
+        <div class="form-actions">
+          <button id="btn-save-workflow" class="btn btn-success" data-testid="btn-save-workflow">💾 حفظ المهمة (Save Workflow)</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. Schedules -->
+    <section id="panel-schedules" class="tab-panel">
+      <div class="panel-card">
+        <h2 data-i18n="schedulesHeading">إدارة المهام المجدولة (Scheduled Tasks)</h2>
+        <div class="form-row">
+          <input id="sched-wf-name" data-testid="sched-wf-name" placeholder="اسم المهمة" value="إصدار فاتورة تلقائية" />
+          <input id="sched-interval" data-testid="sched-interval" type="number" min="5" value="60" placeholder="التكرار بالثواني" />
+          <button id="btn-create-schedule" class="btn btn-primary" data-testid="btn-create-schedule">+ جدولة المهمة</button>
+        </div>
+        <ul id="schedules-list" class="steps-list" data-testid="schedules-list"></ul>
+      </div>
+    </section>
+
+    <!-- 4. History -->
+    <section id="panel-history" class="tab-panel">
+      <div class="panel-card">
+        <div class="card-header-flex">
+          <h2 data-i18n="historyHeading">سجل التشغيل السابق (محمي من تسريب الأسرار)</h2>
+          <button id="btn-refresh-history" class="btn btn-outline" data-testid="btn-refresh-history">تحديث السجل</button>
+        </div>
+        <ul id="history-list" class="steps-list" data-testid="history-list"></ul>
+      </div>
+    </section>
+
+    <!-- 5. Marketplace -->
+    <section id="panel-marketplace" class="tab-panel">
+      <div class="panel-card">
+        <h2 data-i18n="marketplaceHeading">متجر أدوات Human2API الموقعة رقميًا (Ed25519 Verified Marketplace)</h2>
+        <div class="form-row">
+          <input id="mp-search-input" data-testid="mp-search-input" placeholder="ابحث عن أداة بالاسم أو التصنيف..." />
+          <button id="btn-mp-search" class="btn btn-primary" data-testid="btn-mp-search">بحث</button>
+        </div>
+        <ul id="marketplace-catalog-list" class="steps-list" data-testid="marketplace-catalog-list"></ul>
+        <h3>الحزم المثبتة محليًا</h3>
+        <ul id="marketplace-installed-list" class="steps-list" data-testid="marketplace-installed-list"></ul>
+      </div>
+    </section>
+
+    <!-- 6. Privacy & Security Settings -->
+    <section id="panel-settings" class="tab-panel">
+      <div class="panel-card">
+        <h2 data-i18n="settingsHeading">إعدادات الخصوصية والصلاحيات وخزنة الأسرار (AES-256-GCM Vault)</h2>
+        <div class="form-row">
+          <input id="vault-passphrase" data-testid="vault-passphrase" type="password" placeholder="كلمة مرور الخزنة المشفرة" />
+          <button id="btn-vault-unlock" class="btn btn-primary" data-testid="btn-vault-unlock">🔓 فتح الخزنة</button>
+          <button id="btn-vault-lock" class="btn btn-outline" data-testid="btn-vault-lock">🔒 قفل الخزنة</button>
+        </div>
+        <div class="form-row">
+          <input id="secret-key-input" data-testid="secret-key-input" placeholder="اسم السر (مثال: api_password)" />
+          <input id="secret-val-input" data-testid="secret-val-input" type="password" placeholder="القيمة السرية" />
+          <button id="btn-save-secret" class="btn btn-success" data-testid="btn-save-secret">حفظ في الخزنة المشفرة</button>
+        </div>
+        <div class="form-row">
+          <label class="checkbox-inline">
+            <input type="checkbox" id="chk-ai-healing-consent" data-testid="chk-ai-healing-consent" />
+            <span>السماح الاختياري بالإصلاح الذكي من المستوى الرابع (دون إرسال كلمات مرور أو ملفات)</span>
+          </label>
+          <select id="sel-network-policy" data-testid="sel-network-policy">
+            <option value="strict">سياسة شبكة صارمة (strict - Allowed Hosts Only)</option>
+            <option value="navigation-only">التحقق من التنقل الرئيسي فقط (navigation-only)</option>
+          </select>
+          <button id="btn-save-settings" class="btn btn-primary" data-testid="btn-save-settings">حفظ إعدادات الأمان</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Record Task Modal -->
+  <div id="record-modal" class="modal hidden" data-testid="record-modal">
+    <div class="modal-content">
+      <h2>تسجيل مهمة جديدة (Record Interactive Workflow)</h2>
+      <p>أدخل اسم المهمة والمنصة، وسيتم استبدال كلمات المرور بمتغيرات سرية تلقائيًا.</p>
+      <input id="rec-task-name" data-testid="rec-task-name" placeholder="اسم المهمة المسجلة" value="مهمة بوابة الفواتير" />
+      <select id="rec-task-target" data-testid="rec-task-target">
+        <option value="browser">المتصفح (Browser)</option>
+        <option value="windows-uia">Windows UIA</option>
+        <option value="macos-ax">macOS AX</option>
+        <option value="linux-atspi">Linux AT-SPI</option>
+        <option value="android-companion">Android Companion</option>
+      </select>
+      <div class="modal-actions">
+        <button id="btn-confirm-record" class="btn btn-success" data-testid="btn-confirm-record">حفظ وإنشاء المهمة المسجلة</button>
+        <button id="btn-close-record-modal" class="btn btn-outline" data-testid="btn-close-record-modal">إغلاق</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

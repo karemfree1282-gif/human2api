@@ -1,0 +1,89 @@
+{
+  "schemaVersion": "0.5",
+  "name": "Synthetic Invoice Portal Demo",
+  "description": "Authorized browser workflow demonstrating parameterized inputs, secret password vaulting, and result assertion.",
+  "version": "1.0.0",
+  "target": "browser",
+  "mode": "write",
+  "networkPolicy": "strict",
+  "allowedHosts": ["127.0.0.1", "127.0.0.2", "localhost"],
+  "inputs": {
+    "customer_name": {
+      "type": "string",
+      "description": "Customer display name",
+      "required": true,
+      "sensitive": false,
+      "default": "شركة الأمل للتقنية"
+    },
+    "invoice_amount": {
+      "type": "string",
+      "description": "Invoice total amount",
+      "required": true,
+      "sensitive": false,
+      "default": "1250.00"
+    },
+    "api_password": {
+      "type": "secret",
+      "description": "Vaulted API password",
+      "required": true,
+      "sensitive": true
+    }
+  },
+  "steps": [
+    {
+      "id": "step_1",
+      "action": "goto",
+      "url": "http://127.0.0.2:8000/demo"
+    },
+    {
+      "id": "step_2",
+      "action": "type",
+      "selector": "[data-testid=\"customer-input\"]",
+      "fallbackSelectors": ["#customer-name", "[name=\"customer_name\"]"],
+      "text": "${input:customer_name}",
+      "role": "textbox",
+      "name": "اسم العميل (Customer Name)",
+      "isWriteAction": true
+    },
+    {
+      "id": "step_3",
+      "action": "type",
+      "selector": "[data-testid=\"amount-input\"]",
+      "fallbackSelectors": ["#invoice-amount", "[name=\"invoice_amount\"]"],
+      "text": "${input:invoice_amount}",
+      "role": "textbox",
+      "name": "قيمة الفاتورة (Amount)",
+      "isWriteAction": true
+    },
+    {
+      "id": "step_4",
+      "action": "type",
+      "selector": "[data-testid=\"password-input\"]",
+      "fallbackSelectors": ["#api-password"],
+      "text": "${secret:api_password}",
+      "sensitive": true,
+      "role": "textbox",
+      "name": "كلمة المرور السرية (API Password)",
+      "isWriteAction": true
+    },
+    {
+      "id": "step_5",
+      "action": "click",
+      "selector": "[data-testid=\"submit-invoice\"]",
+      "fallbackSelectors": ["#submit-invoice-btn"],
+      "role": "button",
+      "name": "إصدار الفاتورة Submit Invoice",
+      "idempotent": false,
+      "isWriteAction": true
+    }
+  ],
+  "assertions": [
+    {
+      "type": "assert_text",
+      "selector": "#invoice-result",
+      "expected": "${input:customer_name}",
+      "match": "contains",
+      "timeoutMs": 5000
+    }
+  ]
+}

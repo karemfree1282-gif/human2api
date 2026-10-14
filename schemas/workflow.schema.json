@@ -1,1 +1,408 @@
-{"$defs":{"androidStep":{"oneOf":[{"additionalProperties":false,"dependentRequired":{"retryDelayMs":["retries"]},"properties":{"action":{"const":"assert_text"},"retries":{"maximum":3,"minimum":0,"type":"integer"},"retryDelayMs":{"maximum":10000,"minimum":100,"type":"integer"},"text":{"maxLength":2048,"minLength":1,"type":"string"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"}},"required":["action","text"],"type":"object"},{"additionalProperties":false,"dependentRequired":{"retryDelayMs":["retries"]},"properties":{"action":{"const":"extract_text"},"as":{"pattern":"^[a-z][a-z0-9_]{0,62}$","type":"string"},"by":{"enum":["text","resource-id","content-desc"]},"label":{"maxLength":150,"minLength":1,"type":"string"},"retries":{"maximum":3,"minimum":0,"type":"integer"},"retryDelayMs":{"maximum":10000,"minimum":100,"type":"integer"},"role":{"maxLength":150,"minLength":1,"type":"string"},"selector":{"maxLength":300,"minLength":1,"type":"string"},"textHint":{"maxLength":150,"minLength":1,"type":"string"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"}},"required":["action","as","selector"],"type":"object"},{"additionalProperties":false,"properties":{"action":{"const":"input_text"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"},"value":{"maxLength":10000,"type":"string"}},"required":["action","value"],"type":"object"},{"additionalProperties":false,"properties":{"action":{"const":"keyevent"},"key":{"maxLength":45,"minLength":1,"type":"string"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"}},"required":["action","key"],"type":"object"},{"additionalProperties":false,"properties":{"action":{"const":"screenshot"},"filename":{"maxLength":128,"pattern":"^[^./\\\\][^/\\\\]*$","type":"string"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"}},"required":["action"],"type":"object"},{"additionalProperties":false,"properties":{"action":{"const":"scroll_node"},"by":{"enum":["resource-id","content-desc"]},"direction":{"enum":["forward","backward"]},"label":{"maxLength":150,"minLength":1,"type":"string"},"role":{"maxLength":150,"minLength":1,"type":"string"},"selector":{"maxLength":300,"minLength":1,"type":"string"},"textHint":{"maxLength":150,"minLength":1,"type":"string"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"}},"required":["action","direction","selector"],"type":"object"},{"additionalProperties":false,"properties":{"action":{"const":"set_text"},"by":{"enum":["resource-id","content-desc"]},"label":{"maxLength":150,"minLength":1,"type":"string"},"role":{"maxLength":150,"minLength":1,"type":"string"},"selector":{"maxLength":300,"minLength":1,"type":"string"},"textHint":{"maxLength":150,"minLength":1,"type":"string"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"},"value":{"maxLength":10000,"type":"string"}},"required":["action","selector","value"],"type":"object"},{"additionalProperties":false,"properties":{"action":{"const":"swipe"},"durationMs":{"maximum":120000,"minimum":100,"type":"integer"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"},"x":{"maximum":16384,"minimum":0,"type":"integer"},"x2":{"maximum":16384,"minimum":0,"type":"integer"},"y":{"maximum":16384,"minimum":0,"type":"integer"},"y2":{"maximum":16384,"minimum":0,"type":"integer"}},"required":["action","x","x2","y","y2"],"type":"object"},{"additionalProperties":false,"properties":{"action":{"const":"tap"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"},"x":{"maximum":16384,"minimum":0,"type":"integer"},"y":{"maximum":16384,"minimum":0,"type":"integer"}},"required":["action","x","y"],"type":"object"},{"additionalProperties":false,"properties":{"action":{"const":"tap_text"},"by":{"enum":["text","resource-id","content-desc"]},"label":{"maxLength":150,"minLength":1,"type":"string"},"role":{"maxLength":150,"minLength":1,"type":"string"},"selector":{"maxLength":300,"minLength":1,"type":"string"},"textHint":{"maxLength":150,"minLength":1,"type":"string"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"}},"required":["action","selector"],"type":"object"},{"additionalProperties":false,"properties":{"action":{"const":"wait_ms"},"durationMs":{"maximum":120000,"minimum":100,"type":"integer"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"}},"required":["action","durationMs"],"type":"object"}]},"browserStep":{"oneOf":[{"additionalProperties":false,"dependentRequired":{"retryDelayMs":["retries"]},"not":{"required":["frame","frames"]},"properties":{"action":{"const":"assert_text"},"alternatives":{"items":{"maxLength":2047,"minLength":1,"type":"string"},"maxItems":8,"type":"array"},"frame":{"maxLength":2048,"minLength":1,"type":"string"},"frames":{"items":{"maxLength":2048,"minLength":1,"type":"string"},"maxItems":10,"minItems":1,"type":"array"},"label":{"maxLength":150,"minLength":1,"type":"string"},"retries":{"maximum":3,"minimum":0,"type":"integer"},"retryDelayMs":{"maximum":10000,"minimum":100,"type":"integer"},"role":{"maxLength":150,"minLength":1,"type":"string"},"selector":{"maxLength":2048,"minLength":1,"type":"string"},"text":{"maxLength":2048,"minLength":1,"type":"string"},"textHint":{"maxLength":150,"minLength":1,"type":"string"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"}},"required":["action","selector","text"],"type":"object"},{"additionalProperties":false,"not":{"required":["frame","frames"]},"properties":{"action":{"const":"check"},"alternatives":{"items":{"maxLength":2047,"minLength":1,"type":"string"},"maxItems":8,"type":"array"},"checked":{"type":["boolean","string"]},"frame":{"maxLength":2048,"minLength":1,"type":"string"},"frames":{"items":{"maxLength":2048,"minLength":1,"type":"string"},"maxItems":10,"minItems":1,"type":"array"},"label":{"maxLength":150,"minLength":1,"type":"string"},"role":{"maxLength":150,"minLength":1,"type":"string"},"selector":{"maxLength":2048,"minLength":1,"type":"string"},"textHint":{"maxLength":150,"minLength":1,"type":"string"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"}},"required":["action","checked","selector"],"type":"object"},{"additionalProperties":false,"not":{"required":["frame","frames"]},"properties":{"action":{"const":"click"},"alternatives":{"items":{"maxLength":2047,"minLength":1,"type":"string"},"maxItems":8,"type":"array"},"frame":{"maxLength":2048,"minLength":1,"type":"string"},"frames":{"items":{"maxLength":2048,"minLength":1,"type":"string"},"maxItems":10,"minItems":1,"type":"array"},"label":{"maxLength":150,"minLength":1,"type":"string"},"role":{"maxLength":150,"minLength":1,"type":"string"},"selector":{"maxLength":2048,"minLength":1,"type":"string"},"textHint":{"maxLength":150,"minLength":1,"type":"string"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"}},"required":["action","selector"],"type":"object"},{"additionalProperties":false,"not":{"required":["frame","frames"]},"properties":{"action":{"const":"download"},"alternatives":{"items":{"maxLength":2047,"minLength":1,"type":"string"},"maxItems":8,"type":"array"},"filename":{"maxLength":128,"pattern":"^[^./\\\\][^/\\\\]*$","type":"string"},"frame":{"maxLength":2048,"minLength":1,"type":"string"},"frames":{"items":{"maxLength":2048,"minLength":1,"type":"string"},"maxItems":10,"minItems":1,"type":"array"},"label":{"maxLength":150,"minLength":1,"type":"string"},"role":{"maxLength":150,"minLength":1,"type":"string"},"selector":{"maxLength":2048,"minLength":1,"type":"string"},"textHint":{"maxLength":150,"minLength":1,"type":"string"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"}},"required":["action","selector"],"type":"object"},{"additionalProperties":false,"not":{"required":["frame","frames"]},"properties":{"action":{"const":"drag"},"alternatives":{"items":{"maxLength":2047,"minLength":1,"type":"string"},"maxItems":8,"type":"array"},"frame":{"maxLength":2048,"minLength":1,"type":"string"},"frames":{"items":{"maxLength":2048,"minLength":1,"type":"string"},"maxItems":10,"minItems":1,"type":"array"},"label":{"maxLength":150,"minLength":1,"type":"string"},"role":{"maxLength":150,"minLength":1,"type":"string"},"selector":{"maxLength":2048,"minLength":1,"type":"string"},"targetSelector":{"maxLength":2048,"minLength":1,"type":"string"},"textHint":{"maxLength":150,"minLength":1,"type":"string"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"}},"required":["action","selector","targetSelector"],"type":"object"},{"additionalProperties":false,"dependentRequired":{"retryDelayMs":["retries"]},"not":{"required":["frame","frames"]},"properties":{"action":{"const":"extract_text"},"alternatives":{"items":{"maxLength":2047,"minLength":1,"type":"string"},"maxItems":8,"type":"array"},"as":{"pattern":"^[a-z][a-z0-9_]{0,62}$","type":"string"},"frame":{"maxLength":2048,"minLength":1,"type":"string"},"frames":{"items":{"maxLength":2048,"minLength":1,"type":"string"},"maxItems":10,"minItems":1,"type":"array"},"label":{"maxLength":150,"minLength":1,"type":"string"},"retries":{"maximum":3,"minimum":0,"type":"integer"},"retryDelayMs":{"maximum":10000,"minimum":100,"type":"integer"},"role":{"maxLength":150,"minLength":1,"type":"string"},"selector":{"maxLength":2048,"minLength":1,"type":"string"},"textHint":{"maxLength":150,"minLength":1,"type":"string"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"}},"required":["action","as","selector"],"type":"object"},{"additionalProperties":false,"not":{"required":["frame","frames"]},"properties":{"action":{"const":"fill"},"alternatives":{"items":{"maxLength":2047,"minLength":1,"type":"string"},"maxItems":8,"type":"array"},"frame":{"maxLength":2048,"minLength":1,"type":"string"},"frames":{"items":{"maxLength":2048,"minLength":1,"type":"string"},"maxItems":10,"minItems":1,"type":"array"},"label":{"maxLength":150,"minLength":1,"type":"string"},"role":{"maxLength":150,"minLength":1,"type":"string"},"selector":{"maxLength":2048,"minLength":1,"type":"string"},"textHint":{"maxLength":150,"minLength":1,"type":"string"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"},"value":{"maxLength":10000,"type":"string"}},"required":["action","selector","value"],"type":"object"},{"additionalProperties":false,"not":{"required":["frame","frames"]},"properties":{"action":{"const":"hover"},"alternatives":{"items":{"maxLength":2047,"minLength":1,"type":"string"},"maxItems":8,"type":"array"},"frame":{"maxLength":2048,"minLength":1,"type":"string"},"frames":{"items":{"maxLength":2048,"minLength":1,"type":"string"},"maxItems":10,"minItems":1,"type":"array"},"label":{"maxLength":150,"minLength":1,"type":"string"},"role":{"maxLength":150,"minLength":1,"type":"string"},"selector":{"maxLength":2048,"minLength":1,"type":"string"},"textHint":{"maxLength":150,"minLength":1,"type":"string"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"}},"required":["action","selector"],"type":"object"},{"additionalProperties":false,"properties":{"action":{"const":"navigate"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"},"url":{"maxLength":2048,"minLength":1,"type":"string"}},"required":["action","url"],"type":"object"},{"additionalProperties":false,"not":{"required":["frame","frames"]},"properties":{"action":{"const":"press"},"alternatives":{"items":{"maxLength":2047,"minLength":1,"type":"string"},"maxItems":8,"type":"array"},"frame":{"maxLength":2048,"minLength":1,"type":"string"},"frames":{"items":{"maxLength":2048,"minLength":1,"type":"string"},"maxItems":10,"minItems":1,"type":"array"},"key":{"maxLength":45,"minLength":1,"type":"string"},"label":{"maxLength":150,"minLength":1,"type":"string"},"role":{"maxLength":150,"minLength":1,"type":"string"},"selector":{"maxLength":2048,"minLength":1,"type":"string"},"textHint":{"maxLength":150,"minLength":1,"type":"string"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"}},"required":["action","key","selector"],"type":"object"},{"additionalProperties":false,"properties":{"action":{"const":"screenshot"},"filename":{"maxLength":128,"pattern":"^[^./\\\\][^/\\\\]*$","type":"string"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"}},"required":["action"],"type":"object"},{"additionalProperties":false,"not":{"required":["frame","frames"]},"properties":{"action":{"const":"scroll"},"alternatives":{"items":{"maxLength":2047,"minLength":1,"type":"string"},"maxItems":8,"type":"array"},"delta":{"maximum":100,"minimum":-100,"type":"integer"},"frame":{"maxLength":2048,"minLength":1,"type":"string"},"frames":{"items":{"maxLength":2048,"minLength":1,"type":"string"},"maxItems":10,"minItems":1,"type":"array"},"label":{"maxLength":150,"minLength":1,"type":"string"},"role":{"maxLength":150,"minLength":1,"type":"string"},"selector":{"maxLength":2048,"minLength":1,"type":"string"},"textHint":{"maxLength":150,"minLength":1,"type":"string"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"}},"required":["action","selector"],"type":"object"},{"additionalProperties":false,"not":{"required":["frame","frames"]},"properties":{"action":{"const":"select"},"alternatives":{"items":{"maxLength":2047,"minLength":1,"type":"string"},"maxItems":8,"type":"array"},"frame":{"maxLength":2048,"minLength":1,"type":"string"},"frames":{"items":{"maxLength":2048,"minLength":1,"type":"string"},"maxItems":10,"minItems":1,"type":"array"},"label":{"maxLength":150,"minLength":1,"type":"string"},"role":{"maxLength":150,"minLength":1,"type":"string"},"selector":{"maxLength":2048,"minLength":1,"type":"string"},"textHint":{"maxLength":150,"minLength":1,"type":"string"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"},"value":{"maxLength":10000,"type":"string"}},"required":["action","selector","value"],"type":"object"},{"additionalProperties":false,"properties":{"action":{"const":"switch_tab"},"index":{"maximum":20,"minimum":0,"type":"integer"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"}},"required":["action","index"],"type":"object"},{"additionalProperties":false,"dependentRequired":{"retryDelayMs":["retries"]},"not":{"required":["frame","frames"]},"properties":{"action":{"const":"wait"},"alternatives":{"items":{"maxLength":2047,"minLength":1,"type":"string"},"maxItems":8,"type":"array"},"frame":{"maxLength":2048,"minLength":1,"type":"string"},"frames":{"items":{"maxLength":2048,"minLength":1,"type":"string"},"maxItems":10,"minItems":1,"type":"array"},"label":{"maxLength":150,"minLength":1,"type":"string"},"retries":{"maximum":3,"minimum":0,"type":"integer"},"retryDelayMs":{"maximum":10000,"minimum":100,"type":"integer"},"role":{"maxLength":150,"minLength":1,"type":"string"},"selector":{"maxLength":2048,"minLength":1,"type":"string"},"textHint":{"maxLength":150,"minLength":1,"type":"string"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"}},"required":["action","selector"],"type":"object"},{"additionalProperties":false,"properties":{"action":{"const":"wait_ms"},"durationMs":{"maximum":120000,"minimum":100,"type":"integer"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"}},"required":["action","durationMs"],"type":"object"}]},"desktopStep":{"oneOf":[{"additionalProperties":false,"dependentRequired":{"retryDelayMs":["retries"]},"properties":{"action":{"const":"assert_image"},"image":{"maxLength":128,"pattern":"^[^./\\\\][^/\\\\]*$","type":"string"},"retries":{"maximum":3,"minimum":0,"type":"integer"},"retryDelayMs":{"maximum":10000,"minimum":100,"type":"integer"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"}},"required":["action","image"],"type":"object"},{"additionalProperties":false,"properties":{"action":{"const":"click"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"},"x":{"maximum":16384,"minimum":0,"type":"integer"},"y":{"maximum":16384,"minimum":0,"type":"integer"}},"required":["action","x","y"],"type":"object"},{"additionalProperties":false,"properties":{"action":{"const":"double_click"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"},"x":{"maximum":16384,"minimum":0,"type":"integer"},"y":{"maximum":16384,"minimum":0,"type":"integer"}},"required":["action","x","y"],"type":"object"},{"additionalProperties":false,"properties":{"action":{"const":"hotkey"},"keys":{"items":{"pattern":"^[a-z0-9_]{1,20}$","type":"string"},"maxItems":5,"minItems":1,"type":"array"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"}},"required":["action","keys"],"type":"object"},{"additionalProperties":false,"properties":{"action":{"const":"move"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"},"x":{"maximum":16384,"minimum":0,"type":"integer"},"y":{"maximum":16384,"minimum":0,"type":"integer"}},"required":["action","x","y"],"type":"object"},{"additionalProperties":false,"properties":{"action":{"const":"press"},"key":{"maxLength":45,"minLength":1,"type":"string"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"}},"required":["action","key"],"type":"object"},{"additionalProperties":false,"properties":{"action":{"const":"screenshot"},"filename":{"maxLength":128,"pattern":"^[^./\\\\][^/\\\\]*$","type":"string"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"}},"required":["action"],"type":"object"},{"additionalProperties":false,"properties":{"action":{"const":"scroll"},"delta":{"maximum":100,"minimum":-100,"type":"integer"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"}},"required":["action","delta"],"type":"object"},{"additionalProperties":false,"properties":{"action":{"const":"type_text"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"},"value":{"maxLength":10000,"type":"string"}},"required":["action","value"],"type":"object"},{"additionalProperties":false,"anyOf":[{"required":["automationId"]},{"required":["name"]}],"dependentRequired":{"retryDelayMs":["retries"]},"properties":{"action":{"const":"ui_assert_text"},"automationId":{"maxLength":200,"minLength":1,"type":"string"},"controlType":{"maxLength":200,"minLength":1,"type":"string"},"name":{"maxLength":200,"minLength":1,"type":"string"},"retries":{"maximum":3,"minimum":0,"type":"integer"},"retryDelayMs":{"maximum":10000,"minimum":100,"type":"integer"},"text":{"maxLength":2048,"minLength":1,"type":"string"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"},"windowTitle":{"maxLength":200,"minLength":1,"type":"string"}},"required":["action","text","windowTitle"],"type":"object"},{"additionalProperties":false,"anyOf":[{"required":["automationId"]},{"required":["name"]}],"properties":{"action":{"const":"ui_click"},"automationId":{"maxLength":200,"minLength":1,"type":"string"},"controlType":{"maxLength":200,"minLength":1,"type":"string"},"name":{"maxLength":200,"minLength":1,"type":"string"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"},"windowTitle":{"maxLength":200,"minLength":1,"type":"string"}},"required":["action","windowTitle"],"type":"object"},{"additionalProperties":false,"anyOf":[{"required":["automationId"]},{"required":["name"]}],"dependentRequired":{"retryDelayMs":["retries"]},"properties":{"action":{"const":"ui_extract_text"},"as":{"pattern":"^[a-z][a-z0-9_]{0,62}$","type":"string"},"automationId":{"maxLength":200,"minLength":1,"type":"string"},"controlType":{"maxLength":200,"minLength":1,"type":"string"},"name":{"maxLength":200,"minLength":1,"type":"string"},"retries":{"maximum":3,"minimum":0,"type":"integer"},"retryDelayMs":{"maximum":10000,"minimum":100,"type":"integer"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"},"windowTitle":{"maxLength":200,"minLength":1,"type":"string"}},"required":["action","as","windowTitle"],"type":"object"},{"additionalProperties":false,"anyOf":[{"required":["automationId"]},{"required":["name"]}],"properties":{"action":{"const":"ui_fill"},"automationId":{"maxLength":200,"minLength":1,"type":"string"},"controlType":{"maxLength":200,"minLength":1,"type":"string"},"name":{"maxLength":200,"minLength":1,"type":"string"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"},"value":{"maxLength":10000,"type":"string"},"windowTitle":{"maxLength":200,"minLength":1,"type":"string"}},"required":["action","value","windowTitle"],"type":"object"},{"additionalProperties":false,"properties":{"action":{"const":"wait_ms"},"durationMs":{"maximum":120000,"minimum":100,"type":"integer"},"timeoutMs":{"maximum":120000,"minimum":100,"type":"integer"}},"required":["action","durationMs"],"type":"object"}]}},"$id":"https://github.com/karemfree1282-gif/human2api/schemas/workflow.schema.json","$schema":"https://json-schema.org/draft/2020-12/schema","additionalProperties":false,"allOf":[{"if":{"anyOf":[{"properties":{"target":{"const":"browser"}},"required":["target"]},{"not":{"required":["target"]}}]},"then":{"not":{"anyOf":[{"required":["deviceSerial"]},{"required":["appPackage"]}]},"properties":{"steps":{"items":{"$ref":"#/$defs/browserStep"}}},"required":["startUrl"]}},{"if":{"properties":{"target":{"const":"desktop"}},"required":["target"]},"then":{"not":{"anyOf":[{"required":["startUrl"]},{"required":["allowedHosts"]},{"required":["networkPolicy"]},{"required":["deviceSerial"]},{"required":["appPackage"]}]},"properties":{"steps":{"items":{"$ref":"#/$defs/desktopStep"}}}}},{"if":{"properties":{"target":{"const":"android"}},"required":["target"]},"then":{"not":{"anyOf":[{"required":["startUrl"]},{"required":["allowedHosts"]},{"required":["networkPolicy"]}]},"properties":{"steps":{"items":{"$ref":"#/$defs/androidStep"}}}}},{"if":{"properties":{"permissions":{"const":"read"}},"required":["permissions"]},"then":{"properties":{"steps":{"items":{"not":{"properties":{"action":{"enum":["check","click","double_click","download","drag","fill","hotkey","input_text","keyevent","move","press","scroll","scroll_node","select","set_text","swipe","tap","tap_text","type_text","ui_click","ui_fill"]}},"required":["action"]}}}}}},{"if":{"properties":{"steps":{"contains":{"properties":{"action":{"enum":["set_text","scroll_node"]}},"required":["action"]}}}},"then":{"required":["appPackage"]}}],"description":"Generated action shapes; the runtime additionally checks templates, hosts, filenames and values.","properties":{"$schema":{"type":"string"},"allowSensitiveArtifacts":{"type":"boolean"},"allowedHosts":{"items":{"minLength":1,"pattern":"^[a-z0-9.-]+$","type":"string"},"maxItems":30,"minItems":1,"type":"array"},"appPackage":{"pattern":"^[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z0-9_]+)+$","type":"string"},"description":{"maxLength":300,"minLength":1,"type":"string"},"deviceSerial":{"pattern":"^[A-Za-z0-9._:-]{1,100}$","type":"string"},"inputs":{"additionalProperties":{"additionalProperties":false,"allOf":[{"if":{"properties":{"secret":{"const":true}},"required":["secret"]},"then":{"not":{"required":["default"]}}}],"properties":{"default":{"type":["string","number","boolean"]},"description":{"maxLength":200,"type":"string"},"required":{"type":"boolean"},"secret":{"type":"boolean"},"type":{"enum":["string","number","boolean"]}},"type":"object"},"maxProperties":80,"propertyNames":{"pattern":"^[a-z][a-z0-9_]{0,62}$"},"type":"object"},"name":{"pattern":"^[a-z][a-z0-9_]{0,62}$","type":"string"},"networkPolicy":{"enum":["navigation","strict"]},"permissions":{"enum":["read","write"]},"schemaVersion":{"const":1},"startUrl":{"maxLength":2048,"minLength":1,"pattern":"^https?://","type":"string"},"steps":{"maxItems":250,"minItems":1,"type":"array"},"target":{"enum":["browser","desktop","android"]}},"required":["schemaVersion","name","description","steps"],"title":"Human2API portable workflow v1","type":"object"}
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/karemfree1282-gif/human2api/schemas/workflow.schema.json",
+  "title": "Human2API Workflow Schema",
+  "description": "Schema for recorded and reusable Human2API workflows across Browser, Desktop (Windows UIA, macOS AX, Linux AT-SPI), and Android Companion.",
+  "type": "object",
+  "required": ["name", "target", "steps"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "enum": ["0.1", "0.2", "0.3", "0.4", "0.5", "1.0"],
+      "default": "0.5"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-zA-Z0-9._-]+$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 2000
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(-[a-zA-Z0-9.]+)?$",
+      "default": "1.0.0"
+    },
+    "target": {
+      "type": "string",
+      "enum": [
+        "browser",
+        "web",
+        "desktop",
+        "windows-uia",
+        "macos-ax",
+        "linux-atspi",
+        "android",
+        "android-companion"
+      ]
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["read", "write"],
+      "default": "read"
+    },
+    "allowedHosts": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "default": []
+    },
+    "allowedApps": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "default": []
+    },
+    "allowedPackages": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-zA-Z][a-zA-Z0-9_]*(\\.[a-zA-Z0-9_]+)+$"
+      },
+      "default": []
+    },
+    "networkPolicy": {
+      "type": "string",
+      "enum": ["strict", "navigation-only", "open"],
+      "default": "strict"
+    },
+    "inputs": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/inputSpec"
+      },
+      "default": {}
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/workflowStep"
+      }
+    },
+    "assertions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/assertionSpec"
+      },
+      "default": []
+    },
+    "healing": {
+      "$ref": "#/$defs/healingConfig"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "$defs": {
+    "inputSpec": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["string", "number", "integer", "boolean", "secret", "file"]
+        },
+        "description": {
+          "type": "string"
+        },
+        "required": {
+          "type": "boolean",
+          "default": true
+        },
+        "sensitive": {
+          "type": "boolean",
+          "default": false
+        },
+        "default": {
+          "type": ["string", "number", "integer", "boolean", "null"]
+        }
+      }
+    },
+    "selectorCandidate": {
+      "type": "object",
+      "required": ["strategy", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "strategy": {
+          "type": "string",
+          "enum": [
+            "css",
+            "xpath",
+            "id",
+            "testid",
+            "role",
+            "aria-label",
+            "text",
+            "name",
+            "placeholder",
+            "automation_id",
+            "resource_id",
+            "content_desc",
+            "ax_identifier",
+            "atspi_path"
+          ]
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        }
+      }
+    },
+    "assertionSpec": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "assert_text",
+            "assert_visible",
+            "assert_url",
+            "assert_value",
+            "assert_count",
+            "assert_title",
+            "assert_window",
+            "assert_package"
+          ]
+        },
+        "selector": {
+          "type": "string"
+        },
+        "expected": {
+          "type": ["string", "number", "integer", "boolean"]
+        },
+        "match": {
+          "type": "string",
+          "enum": ["exact", "contains", "regex"],
+          "default": "contains"
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 120000,
+          "default": 5000
+        }
+      }
+    },
+    "healingConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "maxTier": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4,
+          "default": 3
+        },
+        "aiConsent": {
+          "type": "boolean",
+          "default": false
+        },
+        "aiProvider": {
+          "type": "string",
+          "enum": ["none", "local", "remote"],
+          "default": "none"
+        },
+        "minSemanticConfidence": {
+          "type": "number",
+          "minimum": 0.5,
+          "maximum": 1.0,
+          "default": 0.72
+        }
+      }
+    },
+    "workflowStep": {
+      "type": "object",
+      "required": ["action"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "goto",
+            "navigate",
+            "click",
+            "double_click",
+            "type",
+            "type_text",
+            "fill",
+            "select",
+            "scroll",
+            "wait",
+            "wait_for_selector",
+            "switch_tab",
+            "open_tab",
+            "close_tab",
+            "switch_frame",
+            "upload_file",
+            "download_file",
+            "extract_text",
+            "assert_text",
+            "assert_visible",
+            "assert_url",
+            "assert_value",
+            "focus_window",
+            "resize_window",
+            "press_key",
+            "back",
+            "home",
+            "swipe"
+          ]
+        },
+        "selector": {
+          "type": "string"
+        },
+        "fallbackSelectors": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              { "type": "string" },
+              { "$ref": "#/$defs/selectorCandidate" }
+            ]
+          },
+          "default": []
+        },
+        "url": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "value": {
+          "type": ["string", "number", "boolean", "null"]
+        },
+        "variable": {
+          "type": "string"
+        },
+        "sensitive": {
+          "type": "boolean",
+          "default": false
+        },
+        "idempotent": {
+          "type": "boolean",
+          "default": true
+        },
+        "isWriteAction": {
+          "type": "boolean",
+          "default": false
+        },
+        "framePath": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "tabIndex": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tabTitle": {
+          "type": "string"
+        },
+        "filePath": {
+          "type": "string"
+        },
+        "downloadName": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "automationId": {
+          "type": "string"
+        },
+        "windowTitle": {
+          "type": "string"
+        },
+        "packageName": {
+          "type": "string"
+        },
+        "resourceId": {
+          "type": "string"
+        },
+        "contentDesc": {
+          "type": "string"
+        },
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "deltaX": {
+          "type": "number",
+          "default": 0
+        },
+        "deltaY": {
+          "type": "number",
+          "default": 300
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 120000,
+          "default": 10000
+        },
+        "retries": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5,
+          "default": 0
+        },
+        "retryDelayMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 30000,
+          "default": 250
+        },
+        "expected": {
+          "type": ["string", "number", "boolean"]
+        },
+        "match": {
+          "type": "string",
+          "enum": ["exact", "contains", "regex"],
+          "default": "contains"
+        }
+      }
+    }
+  }
+}

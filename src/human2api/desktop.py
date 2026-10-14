@@ -1,163 +1,357 @@
-"""Explicit-consent desktop automation for Windows, macOS and Linux.
+"""Desktop Automation Engine for Windows UIA, macOS AX, and Linux AT-SPI / GTK+ATK with Unicode & Arabic support."""
 
-PyAutoGUI is imported on demand, so headless servers can still serve MCP and
-browser workflows. Screenshots remain in the run's private artifacts directory.
-The recorder intentionally NEVER captures typed keys or clipboard contents.
-"""
 from __future__ import annotations
 
 import time
-from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
-from .models import WorkflowError, template
-from .execution import RunCancelled, check_cancelled, interruptible_wait, run_step_with_retry
-
-
-SAFE_KEYS = {"enter", "tab", "esc", "escape", "space", "backspace", "delete", "up", "down", "left", "right", "home", "end", "pageup", "pagedown", "ctrl", "shift", "alt", "command", "win", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12", "a", "c", "v", "x", "z", "s", "n", "p"}
-
-
-def _gui() -> Any:
-    try:
-        import pyautogui
-    except ImportError as exc:
-        raise WorkflowError("Desktop support requires: pip install 'human2api[desktop]'") from exc
-    try:
-        pyautogui.FAILSAFE = True  # mouse to upper-left corner to stop
-        pyautogui.PAUSE = 0.1
-    except Exception as exc:
-        raise WorkflowError("desktop cannot access a graphical session") from exc
-    return pyautogui
+from human2api.contracts import StepExecutionRecord, WorkflowRunReport, redact_secrets
+from human2api.desktop_access import (
+    DesktopAccessibleNode,
+    check_macos_ax_permission,
+    detect_linux_display_protocol,
+)
+from human2api.execution import (
+    AssertionFailureError,
+    CancellationToken,
+    WorkflowCancelledError,
+    evaluate_assertion,
+    resolve_step_parameters,
+)
+from human2api.healing import SelfHealingEngine, UIElementCandidate
+from human2api.models import AssertionSpec, Workflow, WorkflowStep
+from human2api.vault import SecretVault
 
 
-def execute_desktop(workflow: dict[str, Any], values: dict[str, Any], artifacts: Path, on_step: Callable | None = None, *, cancel_event: Any = None, heal: bool = False, ai: bool = False) -> dict[str, Any]:
-    gui = _gui() if any(step["action"] not in {"ui_click", "ui_fill", "ui_assert_text", "ui_extract_text", "wait_ms"} for step in workflow["steps"]) else None
-    outputs: dict[str, Any] = {}
-    for i, step in enumerate(workflow["steps"], 1):
-        check_cancelled(cancel_event)
-        act = step["action"]
-        if on_step:
-            on_step(i, act, "running")
-        try:
-            if act == "click":
-                gui.click(step["x"], step["y"])
-            elif act == "double_click":
-                gui.doubleClick(step["x"], step["y"], interval=0.13)
-            elif act == "move":
-                gui.moveTo(step["x"], step["y"], duration=0.2)
-            elif act == "scroll":
-                gui.scroll(step["delta"])
-            elif act == "type_text":
-                text = template(step["value"], values)
-                if any(ord(ch) > 127 for ch in text):
-                    raise WorkflowError("desktop type_text supports ASCII; use an OS keyboard method for Unicode")
-                gui.write(text, interval=0.02)
-            elif act == "press":
-                key = step["key"].lower()
-                if key not in SAFE_KEYS:
-                    raise WorkflowError(f"desktop key not allowlisted: {key}")
-                gui.press(key)
-            elif act == "hotkey":
-                keys = [k.lower() for k in step["keys"]]
-                if any(k not in SAFE_KEYS for k in keys):
-                    raise WorkflowError("desktop hotkey contains an unsupported key")
-                gui.hotkey(*keys)
-            elif act == "wait_ms":
-                interruptible_wait(step["durationMs"], cancel_event)
-            elif act == "screenshot":
-                filename = step.get("filename", f"desktop-{i}.png")
-                if not filename.lower().endswith(".png"):
-                    filename += ".png"
-                result = artifacts / filename
-                gui.screenshot().save(str(result))
-                outputs.setdefault("artifacts", []).append(str(result))
-            elif act in {"ui_click", "ui_fill", "ui_assert_text", "ui_extract_text"}:
-                from .desktop_access import execute_ui_step
-                result = run_step_with_retry(step, lambda: execute_ui_step(step, values, **({"heal": heal, "ai": ai, "audit": outputs.setdefault("healing", [])} if heal else {})), cancel_event=cancel_event)
-                if act == "ui_extract_text":
-                    outputs[step["as"]] = result
-            elif act == "assert_image":
-                # The trusted image must reside alongside the workflow's assets;
-                # arbitrary filesystem reads are deliberately unsupported.
-                assets_dir = artifacts.parent.parent / "assets"
-                if not step["image"].lower().endswith(".png"):
-                    raise WorkflowError("reference image must be a PNG")
-                reference = assets_dir / step["image"]
-                if not reference.is_file() or reference.is_symlink():
-                    raise WorkflowError("reference image not found under assets/")
-                try:
-                    def assert_visible():
-                        found = gui.locateOnScreen(str(reference), confidence=0.90)
-                        if found is None:
-                            raise WorkflowError("reference image not visible on screen")
-                        return found
-                    match = run_step_with_retry(step, assert_visible, cancel_event=cancel_event)
-                except (OSError, ValueError) as exc:
-                    raise WorkflowError("image recognition unavailable; install opencv-python") from exc
-                if match is None:
-                    raise WorkflowError("reference image not visible on screen")
-            else:
-                raise WorkflowError(f"unsupported desktop action: {act}")
-        except RunCancelled:
-            if on_step:
-                on_step(i, act, "cancelled")
-            raise
-        except Exception as exc:
-            if on_step:
-                on_step(i, act, "failed")
-            # Never echo typed values back from the GUI engine.
-            if isinstance(exc, WorkflowError):
-                raise WorkflowError(f"desktop step {i}: {exc}") from None
-            raise WorkflowError(f"desktop step {i} ({act}) failed: {type(exc).__name__}") from None
-        if on_step:
-            on_step(i, act, "passed")
-    return outputs
+class BaseDesktopAdapter:
+    """Base adapter implementing Accessibility-first resolution, pre-action verification, window resize recalculation, and Unicode text entry."""
 
+    target_name: str = "desktop"
 
-def record_desktop(name: str, output_dir: Path, *, description: str = "Guided desktop mouse automation", smart: bool = False) -> Path:
-    """Record mouse clicks/scroll, stop with F12. Never hooks or stores typed keys.
+    def __init__(self, initial_nodes: Optional[List[DesktopAccessibleNode]] = None) -> None:
+        self.nodes: Dict[str, DesktopAccessibleNode] = {}
+        self.active_window: str = ""
+        self.window_geometry: Dict[str, Tuple[int, int, int, int]] = {}
+        if initial_nodes:
+            for n in initial_nodes:
+                self.register_node(n)
 
-    Users add `type_text` steps with {{variable}} in the JSON editor. This is
-    intentionally a pointer recorder, not a system-wide keylogger.
-    """
-    try:
-        from pynput import keyboard, mouse
-    except ImportError as exc:
-        raise WorkflowError("Desktop recorder requires: pip install 'human2api[desktop]'") from exc
-    from threading import Event
-    from .models import save_workflow, workflow_file
-    stop = Event()
-    steps: list[dict[str, Any]] = []
-    inputs: dict[str, Any] = {}
-    def click(x: float, y: float, button: Any, pressed: bool) -> None:
-        if pressed and str(button).endswith("left") and not stop.is_set() and len(steps) < 250:
-            result = None
-            if smart:
-                from .desktop_access import selector_at_point
-                result = selector_at_point(int(x), int(y))
-            steps.append(result or {"action": "click", "x": int(x), "y": int(y)})
-            if result and result.get("controlType", "").lower() in {"edit", "entry", "text", "axtextfield", "axtextarea"} and len(steps) < 250:
-                variable = "input_" + str(len(inputs) + 1)
-                inputs[variable] = {"type": "string", "required": True, "secret": True}
-                steps.append({**result, "action": "ui_fill", "value": "{{" + variable + "}}"})
-    def scroll(x: float, y: float, dx: float, dy: float) -> None:
-        if not stop.is_set() and len(steps) < 250 and dy:
-            steps.append({"action": "scroll", "delta": int(max(-100, min(100, dy)))})
-    def key_press(key: Any) -> bool | None:
-        if key == keyboard.Key.f12:
-            stop.set()
-            return False
+    def register_node(self, node: DesktopAccessibleNode) -> None:
+        self.nodes[node.node_id] = node
+        if not self.active_window and node.window_title:
+            self.active_window = node.window_title
+        if node.window_title and node.window_title not in self.window_geometry:
+            self.window_geometry[node.window_title] = (0, 0, 1024, 768)
+
+    def snapshot_candidates(self) -> List[UIElementCandidate]:
+        out: List[UIElementCandidate] = []
+        for node in self.nodes.values():
+            if self.active_window and node.window_title and node.window_title != self.active_window:
+                continue
+            out.append(node.to_candidate())
+        return out
+
+    def match_primary(self, selector: str) -> List[UIElementCandidate]:
+        sel = (selector or "").strip()
+        matches: List[UIElementCandidate] = []
+        for node in self.nodes.values():
+            if self.active_window and node.window_title and node.window_title != self.active_window:
+                continue
+            cand = node.to_candidate()
+            if (
+                cand.selector == sel
+                or node.automation_id == sel
+                or f'automationId="{node.automation_id}"' == sel
+                or f"#{node.automation_id}" == sel
+                or f'role={node.role.lower()}[name="{node.name}"]' == sel
+            ):
+                matches.append(cand)
+        return matches
+
+    def _is_window_or_app_allowed(self, window_title: str, app_name: str, allowed_apps: List[str]) -> bool:
+        if not allowed_apps:
+            return True
+        allowed_norm = {a.lower().strip() for a in allowed_apps if a.strip()}
+        wt_low = (window_title or "").lower()
+        app_low = (app_name or "").lower()
+        if app_low in allowed_norm or wt_low in allowed_norm:
+            return True
+        for allowed in allowed_norm:
+            if allowed and (allowed in wt_low or allowed in app_low):
+                return True
+        for n in self.nodes.values():
+            if n.window_title == window_title and n.app_name.lower() in allowed_norm:
+                return True
+        return False
+
+    def verify_element_before_action(self, node: DesktopAccessibleNode, step: WorkflowStep, allowed_apps: List[str]) -> None:
+        """Verify element state, window focus, bounds integrity, and allowed application scope before mutating action."""
+        if not node.visible or not node.enabled:
+            raise RuntimeError(f"Desktop element {node.node_id!r} ({node.name!r}) is not visible or enabled.")
+        if node.bounds[2] <= 0 or node.bounds[3] <= 0:
+            raise RuntimeError(f"Desktop element {node.node_id!r} has invalid zero/negative bounds {node.bounds}.")
+        if not self._is_window_or_app_allowed(node.window_title, node.app_name, allowed_apps):
+            raise PermissionError(
+                f"Application {node.app_name or node.window_title!r} is not in allowedApps={allowed_apps}."
+            )
+
+    def resize_window(self, window_title: str, width: int, height: int) -> None:
+        """Simulate or apply window resize and recalculate relative element bounds cleanly."""
+        old_geom = self.window_geometry.get(window_title, (0, 0, 1024, 768))
+        scale_x = max(0.25, width / max(1, old_geom[2]))
+        scale_y = max(0.25, height / max(1, old_geom[3]))
+        self.window_geometry[window_title] = (old_geom[0], old_geom[1], width, height)
+        for node in self.nodes.values():
+            if node.window_title == window_title:
+                x, y, w, h = node.bounds
+                node.bounds = (
+                    int(round(x * scale_x)),
+                    int(round(y * scale_y)),
+                    max(8, int(round(w * scale_x))),
+                    max(8, int(round(h * scale_y))),
+                )
+
+    def perform_node_action(self, node: DesktopAccessibleNode, action: str, text_val: Optional[str] = None) -> Any:
+        node.focused = True
+        if action in ("click", "double_click"):
+            if node.role.lower() in ("checkbox", "switch"):
+                node.value = "false" if node.value == "true" else "true"
+            elif node.role.lower() == "button":
+                node.value = "invoked"
+            return node.value
+        if action in ("type", "type_text", "fill"):
+            node.value = str(text_val or "")
+            return node.value
+        if action == "select":
+            node.value = str(text_val or "")
+            return node.value
+        if action == "extract_text":
+            return node.value or node.name
         return None
-    print("DESKTOP RECORDING: mouse clicks and scrolling only. Press F12 to stop.")
-    if smart:
-        print("Native smart capture: unique non-password controls replace coordinates. Clicking an editable control adds a secret input placeholder, never its value. Review unused placeholders before running.")
-    print("NO keyboard text/passwords are captured. Review coordinates before sharing.")
-    with mouse.Listener(on_click=click, on_scroll=scroll) as mouse_listener, keyboard.Listener(on_press=key_press):
-        stop.wait()
-        mouse_listener.stop()
-    if not steps:
-        raise WorkflowError("no desktop pointer actions recorded")
-    path = workflow_file(output_dir, name)
-    if path.exists():
-        raise WorkflowError("workflow already exists")
-    return save_workflow(path, {"schemaVersion": 1, "name": name, "description": description, "target": "desktop", "permissions": "write", "inputs": inputs, "steps": steps})
+
+    def execute_workflow(
+        self,
+        workflow: Workflow,
+        runtime_inputs: Dict[str, Any],
+        vault: Optional[SecretVault],
+        secrets_known: Set[str],
+        cancel_token: CancellationToken,
+        ai_advisor: Optional[Callable] = None,
+        step_observer: Optional[Callable[[StepExecutionRecord], None]] = None,
+        start_ts: Optional[float] = None,
+    ) -> WorkflowRunReport:
+        t0 = start_ts or time.perf_counter()
+        healer = SelfHealingEngine(config=workflow.healing, ai_advisor=ai_advisor)
+        step_records: List[StepExecutionRecord] = []
+        healing_events: List[Dict[str, Any]] = []
+        outputs: Dict[str, Any] = {}
+        assertions_passed = 0
+        assertions_failed = 0
+
+        try:
+            for idx, step in enumerate(workflow.steps):
+                cancel_token.check()
+                step_start = time.perf_counter()
+                step_id = step.id or f"step_{idx + 1}"
+                action = step.action
+
+                if step.windowTitle:
+                    self.active_window = step.windowTitle
+
+                if action == "focus_window":
+                    if not step.windowTitle:
+                        raise ValueError(f"Step {step_id} focus_window requires windowTitle.")
+                    if not self._is_window_or_app_allowed(step.windowTitle, "", workflow.allowedApps):
+                        raise PermissionError(f"Window {step.windowTitle!r} is not in allowedApps={workflow.allowedApps}.")
+                    self.active_window = step.windowTitle
+                    rec = StepExecutionRecord(
+                        step_id=step_id,
+                        action=action,
+                        status="passed",
+                        duration_ms=(time.perf_counter() - step_start) * 1000.0,
+                    )
+                    step_records.append(rec)
+                    if step_observer:
+                        step_observer(rec)
+                    continue
+
+                if action == "resize_window":
+                    win = step.windowTitle or self.active_window
+                    w = int(step.x or 1280)
+                    h = int(step.y or 800)
+                    self.resize_window(win, w, h)
+                    rec = StepExecutionRecord(
+                        step_id=step_id,
+                        action=action,
+                        status="passed",
+                        duration_ms=(time.perf_counter() - step_start) * 1000.0,
+                    )
+                    step_records.append(rec)
+                    if step_observer:
+                        step_observer(rec)
+                    continue
+
+                candidates = self.snapshot_candidates()
+                resolution = healer.resolve(
+                    step=step,
+                    candidates=candidates,
+                    primary_matcher=self.match_primary,
+                    allowed_scopes=workflow.allowedApps,
+                    already_executed_write=False,
+                )
+                if not resolution.resolved or not resolution.candidate_id:
+                    if "outside allowed scopes" in resolution.reason:
+                        raise PermissionError(f"Target element is not in allowedApps: {resolution.reason}")
+                    raise RuntimeError(f"Desktop step {step_id} ({action}) failed resolution: {resolution.reason}")
+
+                node = self.nodes.get(resolution.candidate_id)
+                if node is None:
+                    raise RuntimeError(f"Resolved desktop node {resolution.candidate_id!r} no longer exists.")
+
+                self.verify_element_before_action(node, step, workflow.allowedApps)
+
+                if resolution.tier > 1:
+                    healing_events.append(
+                        {
+                            "step_id": step_id,
+                            "original_selector": step.selector or step.automationId,
+                            "healed_selector": resolution.selector,
+                            "tier": resolution.tier,
+                            "confidence": resolution.confidence,
+                            "reason": resolution.reason,
+                        }
+                    )
+
+                extracted = None
+                if action in ("type", "type_text", "fill", "select"):
+                    raw_text = step.text if step.text is not None else str(step.value or "")
+                    text_val, used_sec = resolve_step_parameters(raw_text, workflow, runtime_inputs, vault)
+                    secrets_known.update(used_sec)
+                    self.perform_node_action(node, action, text_val)
+                elif action in ("assert_text", "assert_visible", "assert_value"):
+                    exp_val, used_sec = resolve_step_parameters(
+                        str(step.expected) if step.expected is not None else None,
+                        workflow,
+                        runtime_inputs,
+                        vault,
+                    )
+                    secrets_known.update(used_sec)
+                    actual = (
+                        node.visible
+                        if action == "assert_visible"
+                        else (node.value if action == "assert_value" else (node.value or node.name))
+                    )
+                    try:
+                        evaluate_assertion(
+                            AssertionSpec(type=action, selector=resolution.selector, expected=exp_val, match=step.match),
+                            actual,
+                        )
+                        assertions_passed += 1
+                    except AssertionFailureError:
+                        assertions_failed += 1
+                        raise
+                else:
+                    extracted = self.perform_node_action(node, action)
+                    if action == "extract_text" and extracted is not None:
+                        outputs[step.variable or step_id] = extracted
+
+                rec = StepExecutionRecord(
+                    step_id=step_id,
+                    action=action,
+                    status="healed" if resolution.tier > 1 else "passed",
+                    duration_ms=(time.perf_counter() - step_start) * 1000.0,
+                    selector_used=resolution.selector,
+                    healing_tier=resolution.tier,
+                    extracted_value=extracted,
+                )
+                step_records.append(rec)
+                if step_observer:
+                    step_observer(rec)
+
+            for aspec in workflow.assertions:
+                cancel_token.check()
+                exp_val, used_sec = resolve_step_parameters(
+                    str(aspec.expected) if aspec.expected is not None else None,
+                    workflow,
+                    runtime_inputs,
+                    vault,
+                )
+                secrets_known.update(used_sec)
+                matched = self.match_primary(aspec.selector or "")
+                if not matched:
+                    assertions_failed += 1
+                    raise AssertionFailureError(f"Desktop post-assertion selector {aspec.selector!r} not found.")
+                node = self.nodes[matched[0].candidate_id]
+                actual = (
+                    node.visible
+                    if aspec.type == "assert_visible"
+                    else (node.value if aspec.type == "assert_value" else (node.value or node.name))
+                )
+                try:
+                    evaluate_assertion(
+                        AssertionSpec(type=aspec.type, selector=aspec.selector, expected=exp_val, match=aspec.match),
+                        actual,
+                    )
+                    assertions_passed += 1
+                except AssertionFailureError:
+                    assertions_failed += 1
+                    raise
+
+            return WorkflowRunReport(
+                workflow_name=workflow.name,
+                target=workflow.target,
+                status="passed",
+                duration_ms=(time.perf_counter() - t0) * 1000.0,
+                steps=step_records,
+                assertions_passed=assertions_passed,
+                assertions_failed=assertions_failed,
+                healing_events=healing_events,
+                outputs=outputs,
+            )
+        except Exception as exc:
+            return WorkflowRunReport(
+                workflow_name=workflow.name,
+                target=workflow.target,
+                status="cancelled" if isinstance(exc, WorkflowCancelledError) else "failed",
+                duration_ms=(time.perf_counter() - t0) * 1000.0,
+                steps=step_records,
+                assertions_passed=assertions_passed,
+                assertions_failed=assertions_failed,
+                healing_events=healing_events,
+                outputs=outputs,
+                error=redact_secrets(str(exc), secrets_known),
+            )
+
+
+class WindowsUIAAdapter(BaseDesktopAdapter):
+    target_name = "windows-uia"
+
+
+class MacOSAXAdapter(BaseDesktopAdapter):
+    target_name = "macos-ax"
+
+    def __init__(self, initial_nodes: Optional[List[DesktopAccessibleNode]] = None, enforce_os_trust: bool = False) -> None:
+        super().__init__(initial_nodes)
+        self.enforce_os_trust = enforce_os_trust
+
+    def verify_element_before_action(self, node: DesktopAccessibleNode, step: WorkflowStep, allowed_apps: List[str]) -> None:
+        if self.enforce_os_trust:
+            trusted, reason = check_macos_ax_permission()
+            if not trusted:
+                raise PermissionError(reason)
+        super().verify_element_before_action(node, step, allowed_apps)
+
+
+class LinuxATSPIAdapter(BaseDesktopAdapter):
+    target_name = "linux-atspi"
+
+    def session_capabilities(self) -> Dict[str, Any]:
+        return detect_linux_display_protocol()
+
+
+def get_desktop_adapter(target: str, initial_nodes: Optional[List[DesktopAccessibleNode]] = None) -> BaseDesktopAdapter:
+    if target == "windows-uia":
+        return WindowsUIAAdapter(initial_nodes)
+    if target == "macos-ax":
+        return MacOSAXAdapter(initial_nodes)
+    return LinuxATSPIAdapter(initial_nodes)

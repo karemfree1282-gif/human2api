@@ -1,379 +1,754 @@
-"""Local-only dashboard and optional REST API with an ephemeral CSRF token."""
+"""Hardened Local REST API, Marketplace HTTPS Service, and Built-in Demo App Server."""
 
 from __future__ import annotations
 
+import base64
+import http.server
 import json
-import os
+import pathlib
 import secrets
-import sqlite3
-import subprocess
-import sys
+import socketserver
+import ssl
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from importlib.resources import files
-from pathlib import Path
-from typing import Any
-from urllib.parse import unquote, urlsplit
+import urllib.parse
+import uuid
+from typing import Any, Dict, List, Optional, Tuple
 
-from . import __version__
-from .models import NAME_RE, WorkflowError, input_json_schema, list_workflows, load_workflow, save_workflow, workflow_file, validate_inputs
-from .runner import run_workflow
-from .execution import RunCancelled
-from .server_limits import BoundedHTTPServer, unique_security_headers
-from .marketplace import local_catalog, remote_catalog
-from .history import RunJournal
-from .scheduler import LocalScheduler
+from human2api import __version__
+from human2api.contracts import redact_secrets
+from human2api.editor import VisualWorkflowEditor, compute_workflow_etag
+from human2api.execution import CancellationToken
+from human2api.mcp_server import MCPServer
+from human2api.models import Workflow
+from human2api.recorder import WorkflowRecorder
+from human2api.runner import WorkflowRunner
+from human2api.server_limits import DeviceLeaseManager, RateLimiter
+from human2api.workspace import Workspace
 
-MAX_POST_SIZE = 256 * 1024
+SENSITIVE_SINGLETON_HEADERS = {
+    "host",
+    "origin",
+    "authorization",
+    "x-h2a-token",
+    "x-local-token",
+    "content-length",
+    "transfer-encoding",
+}
+
+ALLOWED_LOOPBACK_HOSTS = {"127.0.0.1", "127.0.0.2", "localhost", "[::1]", "::1"}
+
+DEMO_APP_HTML = """<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <title>منصة الفواتير التجريبية - Human2API Demo Portal</title>
+  <style>
+    body { font-family: sans-serif; margin: 24px; background: #f8fafc; color: #0f172a; }
+    .card { background: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); max-width: 680px; }
+    label { display: block; margin-top: 12px; font-weight: bold; }
+    input, select, button { margin-top: 6px; padding: 8px 12px; font-size: 14px; width: 100%; box-sizing: border-box; }
+    button { background: #2563eb; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; margin-top: 14px; }
+    #invoice-result { margin-top: 16px; padding: 12px; background: #ecfdf5; border: 1px solid #10b981; border-radius: 6px; display: none; }
+    iframe { width: 100%; height: 110px; border: 1px solid #cbd5e1; margin-top: 12px; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1 id="demo-heading">بوابة الفواتير المعتمدة - Authorized Invoice Demo</h1>
+    <label for="customer-name">اسم العميل (Customer Name)</label>
+    <input id="customer-name" name="customer_name" data-testid="customer-input" placeholder="أدخل اسم العميل" value="" />
+
+    <label for="invoice-amount">قيمة الفاتورة (Amount)</label>
+    <input id="invoice-amount" name="invoice_amount" data-testid="amount-input" placeholder="100.00" value="" />
+
+    <label for="currency-select">العملة (Currency)</label>
+    <select id="currency-select" name="currency" data-testid="currency-select">
+      <option value="USD">USD</option>
+      <option value="EUR">EUR</option>
+      <option value="EGP">EGP</option>
+      <option value="SAR">SAR</option>
+    </select>
+
+    <label for="api-password">كلمة المرور السرية (API Password)</label>
+    <input id="api-password" name="api_password" type="password" autocomplete="current-password" data-testid="password-input" placeholder="Secret Password" />
+
+    <label for="attachment-file">مرفق الفاتورة (Upload File)</label>
+    <input id="attachment-file" name="attachment" type="file" data-testid="file-input" />
+
+    <button id="submit-invoice-btn" data-testid="submit-invoice" type="submit" aria-label="إصدار الفاتورة Submit Invoice"
+      onclick="
+        const c = document.getElementById('customer-name').value || 'Guest';
+        const a = document.getElementById('invoice-amount').value || '0';
+        const cur = document.getElementById('currency-select').value || 'USD';
+        const res = document.getElementById('invoice-result');
+        res.style.display = 'block';
+        res.innerText = 'تم إصدار الفاتورة بنجاح للعميل: ' + c + ' بمبلغ ' + a + ' ' + cur;
+      ">إصدار الفاتورة (Submit Invoice)</button>
+
+    <a id="Download-Receipt-Link" data-testid="download-receipt" href="/demo/receipt.txt" download="receipt.txt" style="display:inline-block;margin-top:10px;">تحميل الإيصال (Download Receipt)</a>
+    <a id="external-evil-link" href="https://untrusted-external.example.com/phish" style="display:inline-block;margin-top:10px;margin-right:16px;">رابط خارجي غير مصرح</a>
+
+    <div id="invoice-result" data-testid="invoice-result" role="status"></div>
+
+    <iframe id="nested-frame" src="/demo/frame"></iframe>
+  </div>
+</body>
+</html>
+"""
+
+DEMO_FRAME_HTML = """<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<body>
+  <div id="frame-box">
+    <input id="frame-note" data-testid="frame-note-input" placeholder="ملاحظة داخل الإطار الفرعي" />
+    <button id="frame-approve-btn" data-testid="frame-approve" onclick="document.getElementById('frame-status').innerText='تمت الموافقة الفرعية: ' + document.getElementById('frame-note').value">اعتماد الفرعي</button>
+    <span id="frame-status" data-testid="frame-status">قيد الانتظار</span>
+  </div>
+</body>
+</html>
+"""
 
 
-def openapi_schema(directory: Path, port: int = 8765) -> dict[str, Any]:
-    paths: dict[str, Any] = {}
-    for entry in list_workflows(directory):
-        wf = load_workflow(workflow_file(directory, entry["name"]))
-        paths[f"/api/run/{wf['name']}"] = {
-            "post": {
-                "operationId": "run_" + wf["name"],
-                "summary": wf["description"],
-                "security": [{"LocalToken": []}],
-                "requestBody": {"required": True, "content": {"application/json": {"schema": {"type": "object", "properties": {"inputs": input_json_schema(wf), "approve": {"type": "boolean", "description": "Explicit permission to run write workflows"}, "healSelectors": {"type": "boolean", "description": "Enable local semantic recovery"}, "aiHeal": {"type": "boolean", "description": "Explicitly consent to sending sanitized UI metadata to your configured provider"}}, "required": ["inputs"], "additionalProperties": False}}}},
-                "responses": {"202": {"description": "Execution accepted; poll GET /api/runs/{runId}"}, "400": {"description": "Validation error"}, "429": {"description": "All local execution slots are busy"}},
-            }
-        }
-    paths["/api/runs/{runId}/cancel"] = {
-        "post": {"operationId": "cancel_run", "summary": "Request cooperative cancellation of an active run",
-                 "security": [{"LocalToken": []}], "parameters": [{"name": "runId", "in": "path", "required": True, "schema": {"type": "string"}}],
-                 "responses": {"202": {"description": "Cancellation requested"}, "409": {"description": "Run already finished"}}}}
-    # Operational routes are documented alongside each typed workflow tool.
-    from .contracts import workflow_schema
-    for route, label in {
-        "/api/workflows":"List installed workflows", "/api/history":"Metadata-only run history",
-        "/api/schedules":"List enabled schedules", "/api/platforms":"Platform capability probes",
-        "/api/catalog":"List local packages", "/api/catalog/remote":"Query public JSON catalog",
-        "/api/recorder":"Recorder status", "/api/openapi.json":"This OpenAPI definition",
-    }.items():
-        paths[route] = {"get":{"summary":label,"security":[{"LocalToken":[]}],"responses":{"200":{"description":"JSON response"},"401":{"description":"Invalid token"}}}}
-    for route, label, parameter in (
-        ("/api/runs/{runId}","Live status or metadata-only history","runId"),
-        ("/api/editor/workflows/{name}","Workflow and current revision","name"),
-        ("/api/workflows/{name}","Inspect workflow","name"),
-    ):
-        paths[route] = {"get":{"summary":label,"security":[{"LocalToken":[]}],
-            "parameters":[{"name":parameter,"in":"path","required":True,"schema":{"type":"string"}}],
-            "responses":{"200":{"description":"Current JSON data"},"404":{"description":"Not found"}}}}
-    definition = workflow_schema()
-    definition.pop("$id", None)
-    def embed_references(value):
-        if isinstance(value, dict):
-            for key, child in value.items():
-                if key == "$ref" and isinstance(child, str) and child.startswith("#/$defs/"):
-                    value[key] = "#/components/schemas/Workflow/$defs/" + child.removeprefix("#/$defs/")
-                else:
-                    embed_references(child)
-        elif isinstance(value, list):
-            for child in value:
-                embed_references(child)
-    embed_references(definition)
-    for route, label in (("/api/editor/validate","Validate only; never execute"),("/api/editor/save/{name}","Optimistic-concurrency save with revision backup")):
-        operation = {"summary":label,"security":[{"LocalToken":[]}],"requestBody":{"required":True,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/Workflow"}}}},
-            "responses":{"200":{"description":"Validation or new revision"},"400":{"description":"Invalid definition"},"409":{"description":"Conflicting edit"},"428":{"description":"Missing If-Match revision"}}}
-        if "{name}" in route:
-            operation["parameters"]=[{"name":"name","in":"path","required":True,"schema":{"type":"string"}},
-                {"name":"If-Match","in":"header","required":True,"schema":{"type":"string"},"description":"Revision from GET; use new to create"}]
-        paths[route]={"post":operation}
-    return {
-        "openapi": "3.1.0",
-        "info": {"title": "Human2API local REST API", "version": __version__, "description": "Only listen on loopback. Send X-H2A-Token for all API operations. Write workflows require approve:true."},
-        "servers": [{"url": f"http://127.0.0.1:{port}"}],
-        "components": {"securitySchemes": {"LocalToken": {"type": "apiKey", "in": "header", "name": "X-H2A-Token"}}, "schemas": {"Workflow": definition}},
-        "paths": paths,
-    }
-
-
-class Human2APIServer(BoundedHTTPServer):
+class ThreadedHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
     daemon_threads = True
-    def __init__(self, address: tuple[str, int], workflows: Path, **kwargs: Any) -> None:
-        self.workflows = workflows.resolve()
-        self.token = secrets.token_urlsafe(32)
-        self.runs: dict[str, dict[str, Any]] = {}
-        self.cancellations: dict[str, threading.Event] = {}
-        self.execution_slots = threading.BoundedSemaphore(2)
-        self.journal = RunJournal(self.workflows.parent / ".h2a" / "history.db")
-        self.recorder: subprocess.Popen[str] | None = None
-        self.recorder_error: str | None = None
-        self.lock = threading.Lock()
-        super().__init__(address, RequestHandler, **kwargs)
-
-    def purge_results(self) -> None:
-        """Call while holding lock; the durable journal contains metadata only."""
-        completed = sorted(((k, v) for k, v in self.runs.items() if v.get("state") in {"completed", "failed", "cancelled"}), key=lambda x: x[1].get("finishedAt", 0), reverse=True)
-        keep = {key for key, _ in completed[:100]}
-        now = time.time()
-        for key, item in completed:
-            if key not in keep or now - item.get("finishedAt", 0) > 3600:
-                self.runs.pop(key, None)
+    allow_reuse_address = True
 
 
-class RequestHandler(BaseHTTPRequestHandler):
-    server: Human2APIServer
-    def log_message(self, fmt: str, *args: Any) -> None:
-        # No POST payloads, credentials, or workflow inputs are logged.
-        return  # Request URLs can contain private identifiers; do not log them.
+class Human2APIServer:
+    """Local loopback REST API + Visual Studio + Marketplace Server with CSRF, DNS Rebinding, and Header Smuggling defenses."""
 
-    def _json(self, code: int, value: Any) -> None:
-        data = json.dumps(value, ensure_ascii=False).encode("utf-8")
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
+    def __init__(
+        self,
+        workspace: Workspace,
+        host: str = "127.0.0.1",
+        port: int = 0,
+        auth_token: Optional[str] = None,
+        rate_limiter: Optional[RateLimiter] = None,
+        ssl_context: Optional[ssl.SSLContext] = None,
+        runner: Optional[WorkflowRunner] = None,
+    ) -> None:
+        if host not in ALLOWED_LOOPBACK_HOSTS:
+            raise ValueError(f"Human2APIServer must bind to a loopback address, got {host!r}")
+        self.workspace = workspace
+        self.workspace.initialize()
+        self.host = host
+        self.port = port
+        self.auth_token = auth_token or f"h2atok_{secrets.token_urlsafe(24)}"
+        self.rate_limiter = rate_limiter or RateLimiter()
+        self.lease_manager = DeviceLeaseManager()
+        self.ssl_context = ssl_context
+        self.runner = runner or WorkflowRunner(vault=self.workspace.vault, workspace_dir=self.workspace.root_dir)
+        self.mcp = MCPServer(workspace=self.workspace, runner=self.runner)
+        self._active_runs: Dict[str, Dict[str, Any]] = {}
+        self._runs_lock = threading.RLock()
+        self._httpd: Optional[ThreadedHTTPServer] = None
+        self._thread: Optional[threading.Thread] = None
 
-    def _asset(self, name: str, content_type: str) -> None:
-        data = files("human2api").joinpath("static", name).read_bytes()
-        if name in {"dashboard.html", "editor.html"}:
-            data = data.replace(b"__H2A_LOCAL_TOKEN__", self.server.token.encode("ascii"))
-        self.send_response(200)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'")
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
+    @property
+    def base_url(self) -> str:
+        scheme = "https" if self.ssl_context else "http"
+        return f"{scheme}://{self.host}:{self.port}"
 
-    def _host_ok(self) -> bool:
-        if not unique_security_headers(self.headers):
-            return False
-        # Reject DNS rebinding to this developer-only service.
-        host = self.headers.get("Host", "")
-        port = self.server.server_address[1]
-        if host not in {f"127.0.0.1:{port}", f"localhost:{port}"}:
-            return False
-        origin = self.headers.get("Origin")
-        return origin is None or origin in {f"http://127.0.0.1:{port}", f"http://localhost:{port}"}
+    def start(self) -> str:
+        server_ref = self
 
-    def _auth_ok(self) -> bool:
-        return secrets.compare_digest(self.headers.get("X-H2A-Token", "").encode("utf-8"), self.server.token.encode("utf-8"))
+        class RequestHandler(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
 
-    def _read_body(self) -> dict[str, Any]:
-        if self.headers.get("Transfer-Encoding") or len(self.headers.get_all("Content-Length", [])) != 1:
-            raise WorkflowError("one Content-Length and no Transfer-Encoding are required")
-        self.connection.settimeout(15)
-        length = int(self.headers.get("Content-Length", "0"))
-        if length <= 0 or length > MAX_POST_SIZE:
-            raise WorkflowError("request body must be a nonempty JSON document below 256 KiB")
-        data = json.loads(self.rfile.read(length))
-        if not isinstance(data, dict):
-            raise WorkflowError("request body must be a JSON object")
-        return data
+            def log_message(self, format: str, *args: Any) -> None:
+                pass
 
-    def do_GET(self) -> None:
-        if not self._host_ok():
-            return self._json(403, {"error": "invalid Host/Origin"})
-        path = urlsplit(self.path).path
-        if path == "/":
-            return self._asset("dashboard.html", "text/html; charset=utf-8")
-        if path == "/editor":
-            return self._asset("editor.html", "text/html; charset=utf-8")
-        if path == "/editor.js":
-            return self._asset("editor.js", "application/javascript; charset=utf-8")
-        if path == "/editor.css":
-            return self._asset("editor.css", "text/css; charset=utf-8")
-        if path == "/app.css":
-            return self._asset("app.css", "text/css; charset=utf-8")
-        if path == "/app.js":
-            return self._asset("app.js", "application/javascript; charset=utf-8")
-        if path == "/demo.js":
-            return self._asset("demo.js", "application/javascript; charset=utf-8")
-        if path == "/demo":
-            return self._asset("demo.html", "text/html; charset=utf-8")
-        if path == "/demo.css":
-            return self._asset("demo.css", "text/css; charset=utf-8")
-        if path == "/health":
-            return self._json(200, {"status": "ok", "version": __version__})
-        if not path.startswith("/api/") or not self._auth_ok():
-            return self._json(401, {"error": "invalid API token"})
-        try:
-            if path.startswith("/api/editor/workflows/"):
-                from .editor import revision
-                name = unquote(path.removeprefix("/api/editor/workflows/"))
-                p = workflow_file(self.server.workflows, name)
-                with self.server.lock:
-                    return self._json(200, {"workflow": load_workflow(p), "revision": revision(p)})
-            if path == "/api/platforms":
-                import importlib.util
-                import shutil
-                return self._json(200, {"browser": {"available": True}, "desktop": {"dependencyAvailable": importlib.util.find_spec("pyautogui") is not None}, "android": {"adbInstalled": shutil.which("adb") is not None}, "nativeAccessibility": {"windows": "UIA", "macos": "AX", "linux": "AT-SPI", "requiresPermission": True}, "windowsUIA": {"supportedOnWindows": True, "requiresExtra": "accessibility"}, "aiHealing": {"optInOnly": True}})
-            if path == "/api/catalog":
-                return self._json(200, {"packages": local_catalog(self.server.workflows.parent / "catalog")})
-            if path == "/api/catalog/remote":
-                return self._json(200, {"packages": remote_catalog()})
-            if path == "/api/history":
-                return self._json(200, {"history": self.server.journal.list()})
-            if path == "/api/schedules":
-                return self._json(200, {"schedules": LocalScheduler(self.server.workflows).list(), "workerRequired": True})
-            if path == "/api/workflows":
-                return self._json(200, {"workflows": list_workflows(self.server.workflows)})
-            if path == "/api/openapi.json":
-                return self._json(200, openapi_schema(self.server.workflows, self.server.server_address[1]))
-            if path.startswith("/api/workflows/"):
-                name = unquote(path.removeprefix("/api/workflows/"))
-                return self._json(200, load_workflow(workflow_file(self.server.workflows, name)))
-            if path.startswith("/api/runs/"):
-                run_id = path.removeprefix("/api/runs/")
-                with self.server.lock:
-                    self.server.purge_results()
-                    status = self.server.runs.get(run_id)
-                if status is None:
-                    # After a server restart, only non-sensitive run metadata remains.
-                    record = self.server.journal.get(run_id)
-                    if record is None:
-                        return self._json(404, {"error": "unknown run"})
-                    return self._json(200, {**record, "summaryOnly": True})
-                return self._json(200, status)
-            if path == "/api/recorder":
-                proc = self.server.recorder
-                return self._json(200, {"running": proc is not None and proc.poll() is None, "exitCode": None if proc is None else proc.poll(), "message": self.server.recorder_error})
-        except (WorkflowError, FileNotFoundError, OSError) as exc:
-            return self._json(400, {"error": str(exc)[:300]})
-        return self._json(404, {"error": "not found"})
+            def _send_json(self, status_code: int, payload: Dict[str, Any]) -> None:
+                secrets_set = (
+                    server_ref.workspace.vault.all_secret_values()
+                    if server_ref.workspace.vault.is_unlocked()
+                    else set()
+                )
+                raw_str = json.dumps(payload, ensure_ascii=False)
+                safe_str = redact_secrets(raw_str, secrets_set)
+                body = safe_str.encode("utf-8")
+                self.send_response(status_code)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("X-Frame-Options", "SAMEORIGIN")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.wfile.write(body)
 
-    def do_POST(self) -> None:
-        if not self._host_ok():
-            return self._json(403, {"error": "invalid Host/Origin"})
-        if not self.path.startswith("/api/") or not self._auth_ok():
-            return self._json(401, {"error": "invalid API token"})
-        try:
-            body = self._read_body()
-            path = urlsplit(self.path).path
-            if path == "/api/editor/validate":
-                from .editor import inspect_definition
-                return self._json(200, inspect_definition(body))
-            if path.startswith("/api/editor/save/"):
-                from .editor import save_revision, EditConflict
-                expected = self.headers.get("If-Match")
-                if expected is None:
-                    return self._json(428, {"error": "If-Match revision is required"})
-                name = unquote(path.removeprefix("/api/editor/save/"))
+            def _send_bytes(self, status_code: int, content_type: str, data: bytes) -> None:
+                self.send_response(status_code)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.wfile.write(data)
+
+            def _validate_headers_and_host(self) -> Tuple[bool, int, str]:
+                # 1. Reject duplicate sensitive headers (HTTP header smuggling / identity ambiguity)
+                seen_counts: Dict[str, int] = {}
+                for k, _ in self.headers.items():
+                    kl = k.lower().strip()
+                    seen_counts[kl] = seen_counts.get(kl, 0) + 1
+                    if kl in SENSITIVE_SINGLETON_HEADERS and seen_counts[kl] > 1:
+                        return False, 400, f"Duplicate sensitive HTTP header rejected: {k}"
+
+                if "transfer-encoding" in seen_counts:
+                    return False, 400, "Ambiguous Transfer-Encoding framing is rejected on local loopback API."
+
+                # 2. Prevent DNS Rebinding via strict Host header check
+                host_hdr = (self.headers.get("Host") or "").strip().lower()
+                if not host_hdr:
+                    return False, 400, "Missing Host header."
+                host_only = host_hdr.split(":")[0] if not host_hdr.startswith("[") else host_hdr.split("]")[0] + "]"
+                if host_only not in ALLOWED_LOOPBACK_HOSTS:
+                    return False, 403, f"Host header {host_hdr!r} blocked by DNS Rebinding protection."
+
+                # 3. Prevent cross-site Origin CSRF
+                origin_hdr = (self.headers.get("Origin") or "").strip()
+                if origin_hdr:
+                    parsed_orig = urllib.parse.urlparse(origin_hdr)
+                    orig_host = (parsed_orig.hostname or "").lower()
+                    if orig_host not in ALLOWED_LOOPBACK_HOSTS:
+                        return False, 403, f"Cross-origin request from {origin_hdr!r} blocked by CSRF policy."
+
+                return True, 200, "ok"
+
+            def _check_auth(self) -> bool:
+                auth_hdr = (self.headers.get("Authorization") or "").strip()
+                token_hdr = (self.headers.get("X-H2A-Token") or self.headers.get("X-Local-Token") or "").strip()
+                candidate = ""
+                if auth_hdr.lower().startswith("bearer "):
+                    candidate = auth_hdr[7:].strip()
+                elif token_hdr:
+                    candidate = token_hdr
+                if not candidate:
+                    return False
+                return secrets.compare_digest(candidate, server_ref.auth_token)
+
+            def _read_json_body(self) -> Tuple[Optional[Dict[str, Any]], Optional[Tuple[int, str]]]:
+                cl_str = self.headers.get("Content-Length")
+                if not cl_str:
+                    return {}, None
                 try:
-                    with self.server.lock:
-                        rev = save_revision(self.server.workflows, name, body, expected)
-                    return self._json(200, {"saved": True, "revision": rev})
-                except EditConflict as exc:
-                    return self._json(409, {"error": str(exc)})
-            if path == "/api/schedules/add":
-                name = body.get("name")
-                minutes = body.get("everyMinutes")
-                data_path = body.get("dataFile")
-                if data_path is not None and (not isinstance(data_path, str) or not 0 < len(data_path) <= 4096):
-                    raise WorkflowError("dataFile must be a local file path")
-                added = LocalScheduler(self.server.workflows).add(name, every_minutes=minutes,
-                    approve_writes=body.get("approve") is True,
-                    data_file=Path(data_path) if data_path is not None else None)
-                return self._json(201, {"schedule": added})
-            if path == "/api/schedules/remove":
-                name = body.get("name")
-                if not isinstance(name, str) or not NAME_RE.fullmatch(name):
-                    raise WorkflowError("invalid schedule name")
-                LocalScheduler(self.server.workflows).remove(name)
-                return self._json(200, {"removed": name})
-            if path.startswith("/api/runs/") and path.endswith("/cancel"):
-                run_id = path[len("/api/runs/"):-len("/cancel")]
-                with self.server.lock:
-                    current = self.server.runs.get(run_id)
-                    event = self.server.cancellations.get(run_id)
-                    if current is None:
-                        return self._json(404, {"error": "unknown run"})
-                    if current["state"] not in {"running", "cancelling"} or event is None:
-                        return self._json(409, {"error": "run has already finished", "state": current["state"]})
-                    event.set()
-                    current["state"] = "cancelling"
-                return self._json(202, {"runId": run_id, "state": "cancelling"})
-            if path.startswith("/api/run/"):
-                name = unquote(path.removeprefix("/api/run/"))
-                workflow = load_workflow(workflow_file(self.server.workflows, name))
-                approve = body.get("approve") is True
-                if workflow.get("permissions", "write") == "write" and not approve:
-                    raise WorkflowError("write workflow requires approve:true")
-                inputs = body.get("inputs", {})
-                validate_inputs(workflow, inputs)
-                if not self.server.execution_slots.acquire(blocking=False):
-                    return self._json(429, {"error": "two workflows are already running; try after one finishes"})
-                run_id = secrets.token_hex(12)
-                stop_event = threading.Event()
-                started_at = int(time.time())
+                    cl = int(cl_str)
+                except ValueError:
+                    return None, (400, "Invalid Content-Length.")
+                if cl < 0 or cl > server_ref.rate_limiter.max_body_bytes:
+                    return None, (413, f"Request body exceeds limit ({server_ref.rate_limiter.max_body_bytes} bytes).")
+                raw = self.rfile.read(cl) if cl > 0 else b"{}"
                 try:
-                    self.server.journal.start(run_id, name, workflow.get("target", "browser"), len(workflow["steps"]))
-                    with self.server.lock:
-                        self.server.cancellations[run_id] = stop_event
-                        self.server.runs[run_id] = {"state": "running", "workflow": name, "createdAt": started_at, "lastStep": None}
-                except Exception:
-                    self.server.execution_slots.release()
-                    raise
-                def track_step(index: int, action: str, state: str) -> None:
-                    # Persist only action name, ordinal and status in memory. Never input values.
-                    with self.server.lock:
-                        if run_id in self.server.runs:
-                            self.server.runs[run_id]["lastStep"] = {"index": index, "action": action, "state": state}
-                def task() -> None:
-                    started_ns = time.monotonic_ns()
-                    try:
-                        result = run_workflow(workflow, inputs, approve_writes=approve,
-                            artifacts_dir=self.server.workflows.parent / "runs",
-                            heal_selectors=body.get("healSelectors") is True or body.get("aiHeal") is True,
-                            ai_heal=body.get("aiHeal") is True, run_id=run_id,
-                            cancel_event=stop_event, on_step=track_step)
-                        status = {"state": "completed", "result": result}
-                    except RunCancelled:
-                        status = {"state": "cancelled", "error": "execution cancelled by user"}
-                    except (WorkflowError, ValueError, OSError) as exc:
-                        status = {"state": "cancelled" if stop_event.is_set() else "failed", "error": str(exc)[:600]}
-                    except Exception as exc:
-                        status = {"state": "failed", "error": f"Unexpected engine error ({type(exc).__name__})"}
-                    finally:
-                        self.server.execution_slots.release()
-                    try:
-                        self.server.journal.finish(run_id, status["state"], (time.monotonic_ns() - started_ns) // 1_000_000)
-                    except sqlite3.Error:
-                        pass
-                    with self.server.lock:
-                        previous = self.server.runs.get(run_id, {})
-                        self.server.runs[run_id] = {**status, "lastStep": previous.get("lastStep"), "workflow": name, "createdAt": started_at, "finishedAt": int(time.time())}
-                        self.server.cancellations.pop(run_id, None)
-                        self.server.purge_results()
-                threading.Thread(target=task, daemon=True).start()
-                return self._json(202, {"runId": run_id, "state": "running"})
-            if path.startswith("/api/save/"):
-                name = unquote(path.removeprefix("/api/save/"))
-                if body.get("name") != name:
-                    raise WorkflowError("workflow name must match route")
-                path_out = workflow_file(self.server.workflows, name)
-                with self.server.lock:
-                    save_workflow(path_out, body)
-                return self._json(200, {"saved": True, "name": name})
-            if path == "/api/record":
-                url = body.get("url")
-                name = body.get("name")
-                if not isinstance(name, str) or not NAME_RE.fullmatch(name):
-                    raise WorkflowError("invalid workflow name")
-                if not isinstance(url, str) or urlsplit(url).scheme not in {"http", "https"} or not urlsplit(url).hostname:
-                    raise WorkflowError("enter a valid HTTP(S) URL")
-                if workflow_file(self.server.workflows, name).exists():
-                    raise WorkflowError("workflow name already exists; choose a new name")
-                if self.server.recorder and self.server.recorder.poll() is None:
-                    raise WorkflowError("recorder already running")
-                launcher = [sys.executable, "--h2a-cli"] if getattr(sys, "frozen", False) else [sys.executable, "-m", "human2api"]
-                cmd = launcher + ["record", url, "--name", name, "--directory", str(self.server.workflows)]
-                self.server.recorder = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                return self._json(202, {"started": True, "message": "Use Stop & save in the new Chromium window"})
-            return self._json(404, {"error": "not found"})
-        except (WorkflowError, ValueError, OSError, json.JSONDecodeError) as exc:
-            self._json(400, {"error": str(exc)[:300]})
+                    parsed = json.loads(raw.decode("utf-8"))
+                    if not isinstance(parsed, dict):
+                        return None, (400, "JSON body must be an object.")
+                    return parsed, None
+                except Exception as exc:
+                    return None, (400, f"Malformed JSON payload: {exc}")
 
+            def _dispatch(self, method: str) -> None:
+                client_ip = self.client_address[0] if self.client_address else "127.0.0.1"
+                if not server_ref.rate_limiter.try_enter_request(client_ip):
+                    self._send_json(429, {"error": "Rate limit or concurrency limit exceeded."})
+                    return
+                try:
+                    ok, code, msg = self._validate_headers_and_host()
+                    if not ok:
+                        self._send_json(code, {"error": msg})
+                        return
 
-def make_server(workflows: Path, port: int = 8765) -> Human2APIServer:
-    workflows.mkdir(parents=True, exist_ok=True)
-    return Human2APIServer(("127.0.0.1", port), workflows)
+                    parsed_url = urllib.parse.urlparse(self.path)
+                    path = parsed_url.path
+                    query = urllib.parse.parse_qs(parsed_url.query)
+
+                    # Public unauthenticated demo & static UI endpoints
+                    if method == "GET" and path == "/demo":
+                        self._send_bytes(200, "text/html; charset=utf-8", DEMO_APP_HTML.encode("utf-8"))
+                        return
+                    if method == "GET" and path == "/demo/frame":
+                        self._send_bytes(200, "text/html; charset=utf-8", DEMO_FRAME_HTML.encode("utf-8"))
+                        return
+                    if method == "GET" and path == "/demo/receipt.txt":
+                        self._send_bytes(200, "text/plain; charset=utf-8", b"Human2API Verified Receipt #2026-OK\n")
+                        return
+                    if method == "GET" and path in ("/", "/index.html", "/studio"):
+                        static_dir = pathlib.Path(__file__).parent / "static"
+                        html_file = static_dir / "index.html"
+                        html_text = html_file.read_text(encoding="utf-8").replace("__H2A_BOOTSTRAP_TOKEN__", server_ref.auth_token)
+                        self._send_bytes(200, "text/html; charset=utf-8", html_text.encode("utf-8"))
+                        return
+                    if method == "GET" and path.startswith("/static/"):
+                        rel = path[len("/static/") :]
+                        if ".." in rel or "/" in rel:
+                            self._send_json(403, {"error": "Forbidden static path."})
+                            return
+                        static_file = (pathlib.Path(__file__).parent / "static" / rel).resolve()
+                        if not static_file.exists():
+                            self._send_json(404, {"error": "Static asset not found."})
+                            return
+                        ctype = "text/css; charset=utf-8" if rel.endswith(".css") else (
+                            "application/javascript; charset=utf-8" if rel.endswith(".js") else "text/plain; charset=utf-8"
+                        )
+                        self._send_bytes(200, ctype, static_file.read_bytes())
+                        return
+
+                    # Marketplace public read endpoints (catalog & package download)
+                    if method == "GET" and path == "/api/v1/marketplace/packages":
+                        q = (query.get("q") or [""])[0]
+                        cat = (query.get("category") or [None])[0]
+                        tgt = (query.get("target") or [None])[0]
+                        pkgs = server_ref.workspace.registry.search_packages(query=q, category=cat, target=tgt)
+                        self._send_json(200, {"packages": pkgs})
+                        return
+
+                    if method == "GET" and path == "/api/v1/marketplace/download":
+                        tool_id = (query.get("tool_id") or [""])[0]
+                        ver = (query.get("version") or [None])[0]
+                        try:
+                            zip_bytes, _ = server_ref.workspace.registry.download_package_bytes(tool_id, ver)
+                            self._send_bytes(200, "application/zip", zip_bytes)
+                        except KeyError as exc:
+                            self._send_json(404, {"error": str(exc)})
+                        except PermissionError as exc:
+                            self._send_json(410, {"error": str(exc)})
+                        return
+
+                    # All other API endpoints require valid Bearer / X-H2A-Token authentication
+                    if not self._check_auth():
+                        self._send_json(401, {"error": "Unauthorized: missing or invalid local API token."})
+                        return
+
+                    if method == "GET" and path == "/api/v1/health":
+                        self._send_json(
+                            200,
+                            {
+                                "status": "ok",
+                                "version": __version__,
+                                "vault_unlocked": server_ref.workspace.vault.is_unlocked(),
+                            },
+                        )
+                        return
+
+                    if method == "GET" and path == "/api/v1/status":
+                        self._send_json(
+                            200,
+                            {
+                                "version": __version__,
+                                "workflows_count": len(server_ref.workspace.list_workflows()),
+                                "installed_packages_count": len(server_ref.workspace.marketplace.list_installed()),
+                                "schedules_count": len(server_ref.workspace.scheduler.list_jobs()),
+                                "history_count": len(server_ref.workspace.history.list_runs()),
+                                "vault_unlocked": server_ref.workspace.vault.is_unlocked(),
+                                "settings": server_ref.workspace.get_config(),
+                            },
+                        )
+                        return
+
+                    if method == "GET" and path == "/api/v1/workflows":
+                        self._send_json(200, {"workflows": server_ref.workspace.list_workflows()})
+                        return
+
+                    if method == "POST" and path == "/api/v1/workflows":
+                        body, err = self._read_json_body()
+                        if err:
+                            self._send_json(err[0], {"error": err[1]})
+                            return
+                        try:
+                            wf = Workflow.from_dict(body or {})
+                            safe_name = "".join(c if c.isalnum() or c in "._-" else "_" for c in wf.name.lower()).strip("_") or "workflow"
+                            out_path = server_ref.workspace.workflows_dir / f"{safe_name}.json"
+                            wf.save(out_path)
+                            self._send_json(
+                                201,
+                                {
+                                    "workflow": wf.to_dict(),
+                                    "filename": out_path.name,
+                                    "etag": compute_workflow_etag(wf),
+                                },
+                            )
+                        except Exception as exc:
+                            self._send_json(400, {"error": str(exc)})
+                        return
+
+                    if path.startswith("/api/v1/workflows/") and method in ("PUT", "DELETE", "POST"):
+                        parts = [p for p in path.split("/") if p]
+                        wf_slug = urllib.parse.unquote(parts[3])
+                        wf_file = server_ref.workspace.workflows_dir / (
+                            wf_slug if wf_slug.endswith(".json") else f"{wf_slug}.json"
+                        )
+                        if not wf_file.exists():
+                            self._send_json(404, {"error": f"Workflow {wf_slug!r} not found."})
+                            return
+                        if method == "DELETE":
+                            wf_file.unlink()
+                            self._send_json(200, {"deleted": wf_slug})
+                            return
+
+                        body, err = self._read_json_body()
+                        if err:
+                            self._send_json(err[0], {"error": err[1]})
+                            return
+                        wf = Workflow.load(wf_file)
+                        op = (body or {}).get("operation")
+                        try:
+                            if op == "add_step":
+                                wf = VisualWorkflowEditor.add_step(wf, body.get("step") or {}, body.get("position"))
+                            elif op == "delete_step":
+                                wf = VisualWorkflowEditor.delete_step(wf, int(body.get("index", 0)))
+                            elif op == "reorder_steps":
+                                wf = VisualWorkflowEditor.reorder_steps(wf, int(body.get("fromIndex", 0)), int(body.get("toIndex", 0)))
+                            elif op == "set_input":
+                                wf = VisualWorkflowEditor.set_input_parameter(
+                                    wf,
+                                    name=str(body.get("name", "param")),
+                                    input_type=str(body.get("type", "string")),
+                                    description=str(body.get("description", "")),
+                                    required=bool(body.get("required", True)),
+                                    sensitive=bool(body.get("sensitive", False)),
+                                    default=body.get("default"),
+                                )
+                            else:
+                                wf = Workflow.from_dict(body or {})
+                            wf.save(wf_file)
+                            self._send_json(200, {"workflow": wf.to_dict(), "etag": compute_workflow_etag(wf)})
+                        except Exception as exc:
+                            self._send_json(400, {"error": str(exc)})
+                        return
+
+                    if method == "POST" and path == "/api/v1/record/compile":
+                        body, err = self._read_json_body()
+                        if err:
+                            self._send_json(err[0], {"error": err[1]})
+                            return
+                        try:
+                            rec = WorkflowRecorder(
+                                name=str((body or {}).get("name") or "Recorded Task"),
+                                target=str((body or {}).get("target") or "browser"),
+                                network_policy=str((body or {}).get("networkPolicy") or "strict"),
+                            )
+                            for ev in (body or {}).get("events") or []:
+                                rec.record_event(ev)
+                            wf = rec.compile_workflow()
+                            if (body or {}).get("save", True):
+                                safe_name = "".join(c if c.isalnum() or c in "._-" else "_" for c in wf.name.lower()).strip("_") or "recorded_task"
+                                wf.save(server_ref.workspace.workflows_dir / f"{safe_name}.json")
+                            self._send_json(201, {"workflow": wf.to_dict()})
+                        except Exception as exc:
+                            self._send_json(400, {"error": str(exc)})
+                        return
+
+                    if method == "POST" and path == "/api/v1/run":
+                        body, err = self._read_json_body()
+                        if err:
+                            self._send_json(err[0], {"error": err[1]})
+                            return
+                        assert body is not None
+                        try:
+                            if "workflow" in body and isinstance(body["workflow"], dict):
+                                wf = Workflow.from_dict(body["workflow"])
+                            elif "workflowName" in body:
+                                wf_name = str(body["workflowName"])
+                                wf_path = server_ref.workspace.workflows_dir / (
+                                    wf_name if wf_name.endswith(".json") else f"{wf_name}.json"
+                                )
+                                wf = Workflow.load(wf_path)
+                            else:
+                                self._send_json(400, {"error": "Provide 'workflow' object or 'workflowName'."})
+                                return
+                        except Exception as exc:
+                            self._send_json(400, {"error": str(exc)})
+                            return
+
+                        run_id = f"run_{uuid.uuid4().hex[:12]}"
+                        cancel_token = CancellationToken()
+                        progress_steps: List[Dict[str, Any]] = []
+                        with server_ref._runs_lock:
+                            server_ref._active_runs[run_id] = {
+                                "run_id": run_id,
+                                "workflow_name": wf.name,
+                                "status": "running",
+                                "cancel_token": cancel_token,
+                                "steps": progress_steps,
+                                "report": None,
+                            }
+
+                        def _on_step(step_rec):
+                            progress_steps.append(step_rec.to_dict())
+
+                        run_async = bool(body.get("async", False))
+                        inputs = dict(body.get("inputs") or {})
+                        allow_write = bool(body.get("allowWrite", False))
+
+                        def _exec_run():
+                            local_runner = WorkflowRunner(
+                                vault=server_ref.workspace.vault,
+                                workspace_dir=server_ref.workspace.root_dir,
+                                desktop_adapter=server_ref.runner.desktop_adapter,
+                                android_adapter=server_ref.runner.android_adapter,
+                                step_observer=_on_step,
+                            )
+                            rep = local_runner.run(
+                                workflow=wf,
+                                inputs=inputs,
+                                allow_write=allow_write,
+                                cancel_token=cancel_token,
+                            )
+                            secrets_set = (
+                                server_ref.workspace.vault.all_secret_values()
+                                if server_ref.workspace.vault.is_unlocked()
+                                else set()
+                            )
+                            server_ref.workspace.history.record_run(rep, secret_values=secrets_set)
+                            with server_ref._runs_lock:
+                                server_ref._active_runs[run_id]["status"] = rep.status
+                                server_ref._active_runs[run_id]["report"] = rep.to_dict(secret_values=secrets_set)
+                            return rep
+
+                        if run_async:
+                            t = threading.Thread(target=_exec_run, daemon=True)
+                            t.start()
+                            self._send_json(202, {"run_id": run_id, "status": "running"})
+                        else:
+                            rep = _exec_run()
+                            secrets_set = (
+                                server_ref.workspace.vault.all_secret_values()
+                                if server_ref.workspace.vault.is_unlocked()
+                                else set()
+                            )
+                            code = 200 if rep.status == "passed" else (499 if rep.status == "cancelled" else 422)
+                            self._send_json(code, {"run_id": run_id, "report": rep.to_dict(secret_values=secrets_set)})
+                        return
+
+                    if path.startswith("/api/v1/runs/"):
+                        parts = [p for p in path.split("/") if p]
+                        run_id = parts[3]
+                        with server_ref._runs_lock:
+                            run_entry = server_ref._active_runs.get(run_id)
+                        if run_entry is None:
+                            self._send_json(404, {"error": f"Run {run_id!r} not found."})
+                            return
+                        if method == "POST" and path.endswith("/cancel"):
+                            run_entry["cancel_token"].cancel("Cancelled via REST API.")
+                            self._send_json(200, {"run_id": run_id, "status": "cancelling"})
+                            return
+                        if method == "GET":
+                            self._send_json(
+                                200,
+                                {
+                                    "run_id": run_id,
+                                    "workflow_name": run_entry["workflow_name"],
+                                    "status": run_entry["status"],
+                                    "steps": run_entry["steps"],
+                                    "report": run_entry["report"],
+                                },
+                            )
+                            return
+
+                    if method == "GET" and path == "/api/v1/history":
+                        self._send_json(200, {"history": server_ref.workspace.history.list_runs()})
+                        return
+
+                    if path == "/api/v1/schedules":
+                        if method == "GET":
+                            self._send_json(200, {"schedules": server_ref.workspace.scheduler.list_jobs()})
+                            return
+                        if method == "POST":
+                            body, err = self._read_json_body()
+                            if err:
+                                self._send_json(err[0], {"error": err[1]})
+                                return
+                            try:
+                                job = server_ref.workspace.scheduler.add_job(
+                                    workflow_path=str((body or {}).get("workflowPath") or ""),
+                                    workflow_name=str((body or {}).get("workflowName") or "Scheduled Workflow"),
+                                    interval_seconds=int((body or {}).get("intervalSeconds", 60)),
+                                    inputs=dict((body or {}).get("inputs") or {}),
+                                    allow_write=bool((body or {}).get("allowWrite", True)),
+                                )
+                                self._send_json(201, {"schedule": job.to_dict()})
+                            except Exception as exc:
+                                self._send_json(400, {"error": str(exc)})
+                            return
+
+                    if path.startswith("/api/v1/schedules/"):
+                        job_id = path.split("/")[4]
+                        if method == "DELETE":
+                            removed = server_ref.workspace.scheduler.remove_job(job_id)
+                            self._send_json(200 if removed else 404, {"deleted": removed})
+                            return
+                        if method == "PATCH":
+                            body, err = self._read_json_body()
+                            if err:
+                                self._send_json(err[0], {"error": err[1]})
+                                return
+                            try:
+                                job = server_ref.workspace.scheduler.set_enabled(job_id, bool((body or {}).get("enabled", True)))
+                                self._send_json(200, {"schedule": job.to_dict()})
+                            except KeyError as exc:
+                                self._send_json(404, {"error": str(exc)})
+                            return
+
+                    if path.startswith("/api/v1/marketplace/"):
+                        body, err = self._read_json_body() if method == "POST" else ({}, None)
+                        if err:
+                            self._send_json(err[0], {"error": err[1]})
+                            return
+                        assert body is not None
+                        try:
+                            if method == "GET" and path == "/api/v1/marketplace/installed":
+                                self._send_json(200, {"installed": server_ref.workspace.marketplace.list_installed()})
+                                return
+                            if method == "GET" and path == "/api/v1/marketplace/diff":
+                                tid = (query.get("tool_id") or [""])[0]
+                                v1 = (query.get("from") or [""])[0]
+                                v2 = (query.get("to") or [""])[0]
+                                self._send_json(200, {"diff": server_ref.workspace.registry.diff_versions(tid, v1, v2)})
+                                return
+                            if method == "POST" and path == "/api/v1/marketplace/publishers":
+                                tok = server_ref.workspace.registry.register_publisher(
+                                    publisher_id=str(body["publisher_id"]),
+                                    display_name=str(body.get("display_name") or body["publisher_id"]),
+                                    public_key_b64=str(body["public_key"]),
+                                )
+                                self._send_json(201, {"publisher_id": body["publisher_id"], "publisher_token": tok})
+                                return
+                            if method == "POST" and path == "/api/v1/marketplace/publish":
+                                zip_b64 = str(body["package_zip_b64"])
+                                res = server_ref.workspace.registry.publish_package(
+                                    publisher_id=str(body["publisher_id"]),
+                                    token=str(body["publisher_token"]),
+                                    zip_bytes=base64.b64decode(zip_b64),
+                                    category=str(body.get("category", "automation")),
+                                )
+                                self._send_json(201, {"published": res})
+                                return
+                            if method == "POST" and path == "/api/v1/marketplace/install":
+                                rec = server_ref.workspace.marketplace.install_from_registry(
+                                    tool_id=str(body["tool_id"]),
+                                    version=body.get("version"),
+                                    allow_privilege_expansion=bool(body.get("allowPrivilegeExpansion", False)),
+                                )
+                                self._send_json(200, {"installed": rec})
+                                return
+                            if method == "POST" and path == "/api/v1/marketplace/yank":
+                                server_ref.workspace.registry.yank_package(
+                                    publisher_id=str(body["publisher_id"]),
+                                    token=str(body["publisher_token"]),
+                                    tool_id=str(body["tool_id"]),
+                                    version=str(body["version"]),
+                                    reason=str(body.get("reason", "security")),
+                                )
+                                self._send_json(200, {"yanked": True})
+                                return
+                            if method == "POST" and path == "/api/v1/marketplace/reviews":
+                                rev = server_ref.workspace.registry.add_review(
+                                    reviewer_publisher_id=str(body["publisher_id"]),
+                                    token=str(body["publisher_token"]),
+                                    tool_id=str(body["tool_id"]),
+                                    version=str(body["version"]),
+                                    rating=int(body["rating"]),
+                                    comment=str(body.get("comment", "")),
+                                )
+                                self._send_json(201, {"review": rev})
+                                return
+                            if method == "POST" and path == "/api/v1/marketplace/report":
+                                rep = server_ref.workspace.registry.report_suspicious_tool(
+                                    tool_id=str(body["tool_id"]),
+                                    version=str(body["version"]),
+                                    reporter=str(body.get("reporter", "user")),
+                                    reason=str(body["reason"]),
+                                )
+                                self._send_json(201, {"report": rep})
+                                return
+                        except PermissionError as exc:
+                            self._send_json(403, {"error": str(exc)})
+                            return
+                        except KeyError as exc:
+                            self._send_json(404, {"error": str(exc)})
+                            return
+                        except Exception as exc:
+                            self._send_json(400, {"error": str(exc)})
+                            return
+
+                    if path == "/api/v1/settings":
+                        if method == "GET":
+                            self._send_json(200, {"settings": server_ref.workspace.get_config()})
+                            return
+                        if method == "POST":
+                            body, err = self._read_json_body()
+                            if err:
+                                self._send_json(err[0], {"error": err[1]})
+                                return
+                            cfg = server_ref.workspace.update_config(body or {})
+                            self._send_json(200, {"settings": cfg})
+                            return
+
+                    if path.startswith("/api/v1/vault/"):
+                        body, err = self._read_json_body()
+                        if err:
+                            self._send_json(err[0], {"error": err[1]})
+                            return
+                        assert body is not None
+                        try:
+                            if path == "/api/v1/vault/unlock":
+                                server_ref.workspace.vault.unlock(str(body.get("passphrase", "")))
+                                self._send_json(200, {"unlocked": True, "secrets": server_ref.workspace.vault.list_secret_names()})
+                                return
+                            if path == "/api/v1/vault/lock":
+                                server_ref.workspace.vault.lock()
+                                self._send_json(200, {"unlocked": False})
+                                return
+                            if path == "/api/v1/vault/secrets":
+                                server_ref.workspace.vault.set_secret(str(body["name"]), str(body["value"]))
+                                self._send_json(201, {"saved": body["name"], "secrets": server_ref.workspace.vault.list_secret_names()})
+                                return
+                        except Exception as exc:
+                            self._send_json(400, {"error": str(exc)})
+                            return
+
+                    if method == "POST" and path == "/mcp":
+                        body, err = self._read_json_body()
+                        if err:
+                            self._send_json(err[0], {"error": err[1]})
+                            return
+                        resp = server_ref.mcp.handle_rpc(body or {})
+                        self._send_json(200, resp)
+                        return
+
+                    self._send_json(404, {"error": f"Endpoint not found: {method} {path}"})
+                finally:
+                    server_ref.rate_limiter.exit_request()
+
+            def do_GET(self) -> None:
+                self._dispatch("GET")
+
+            def do_POST(self) -> None:
+                self._dispatch("POST")
+
+            def do_PUT(self) -> None:
+                self._dispatch("PUT")
+
+            def do_PATCH(self) -> None:
+                self._dispatch("PATCH")
+
+            def do_DELETE(self) -> None:
+                self._dispatch("DELETE")
+
+        self._httpd = ThreadedHTTPServer((self.host, self.port), RequestHandler)
+        if self.ssl_context is not None:
+            self._httpd.socket = self.ssl_context.wrap_socket(self._httpd.socket, server_side=True)
+        self.port = self._httpd.server_address[1]
+        self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
+        self._thread.start()
+        return self.base_url
+
+    def stop(self) -> None:
+        if self._httpd is not None:
+            try:
+                self._httpd.shutdown()
+                self._httpd.server_close()
+            except Exception:
+                pass
+            self._httpd = None

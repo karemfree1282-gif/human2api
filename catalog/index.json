@@ -1,0 +1,13 @@
+{
+  "schema": "h2a-community-catalog-v1",
+  "version": "0.5.0",
+  "packages": [
+    {
+      "tool_id": "synthetic-invoice-demo",
+      "version": "1.0.0",
+      "target": "browser",
+      "category": "finance",
+      "description": "Authorized browser invoice automation workflow with vaulted credentials."
+    }
+  ]
+}

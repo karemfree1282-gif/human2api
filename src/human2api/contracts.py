@@ -1,122 +1,173 @@
-"""Shared action shape contracts for the runtime validator and generated schema."""
+"""Formal execution contracts, redaction helpers, and security policy checks."""
+
 from __future__ import annotations
-from typing import Any
 
-SELECTOR = {"selector", "alternatives", "role", "label", "textHint", "frame", "frames"}
-UI = {"windowTitle", "automationId", "name", "controlType"}
-RETRY = {"wait", "assert_text", "extract_text", "assert_image", "ui_assert_text", "ui_extract_text"}
+import json
+import pathlib
+import re
+import urllib.parse
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Set
 
+from human2api.models import Workflow, WorkflowStep
 
-def action_contract(target: str, action: str) -> tuple[set[str], set[str]]:
-    """Return (allowed, required) fields. This is not an execution permission."""
-    common = {"action", "timeoutMs"}
-    if action in RETRY:
-        common |= {"retries", "retryDelayMs"}
-    fields: set[str] = set()
-    required = {"action"}
-    if target == "browser":
-        fields = set(SELECTOR) if action in {"click", "fill", "select", "check", "wait", "assert_text", "extract_text", "download", "press", "hover", "scroll", "drag"} else set()
-        if fields:
-            required.add("selector")
-        data = {"fill":"value", "select":"value", "check":"checked", "assert_text":"text", "extract_text":"as", "navigate":"url", "press":"key", "drag":"targetSelector", "wait_ms":"durationMs", "switch_tab":"index"}
-    elif target == "desktop":
-        fields = set(UI) if action.startswith("ui_") else set()
-        if fields:
-            required.add("windowTitle")
-        if action in {"click", "double_click", "move"}:
-            fields |= {"x", "y"}; required |= {"x", "y"}
-        data = {"type_text":"value", "ui_fill":"value", "ui_assert_text":"text", "ui_extract_text":"as", "hotkey":"keys", "press":"key", "wait_ms":"durationMs", "assert_image":"image", "scroll":"delta"}
-    else:
-        if action in {"tap", "swipe"}:
-            fields |= {"x", "y"}; required |= {"x", "y"}
-        if action == "swipe":
-            fields |= {"x2", "y2", "durationMs"}; required |= {"x2", "y2"}
-        if action in {"tap_text", "extract_text", "set_text", "scroll_node"}:
-            fields |= {"selector", "by", "label", "role", "textHint"}; required.add("selector")
-        data = {"set_text":"value", "input_text":"value", "keyevent":"key", "assert_text":"text", "extract_text":"as", "wait_ms":"durationMs", "scroll_node":"direction"}
-    if action in data:
-        fields.add(data[action]); required.add(data[action])
-    if action in {"screenshot", "download"}:
-        fields.add("filename")
-    if action == "scroll":
-        fields.add("delta")
-    return common | fields, required
+SENSITIVE_KEY_NAMES = {
+    "password",
+    "pass",
+    "passwd",
+    "secret",
+    "token",
+    "api_key",
+    "apikey",
+    "access_token",
+    "refresh_token",
+    "private_key",
+    "credit_card",
+    "cvv",
+    "pin",
+    "otp",
+    "authorization",
+}
+
+REDACTED_PLACEHOLDER = "[REDACTED]"
 
 
-def workflow_schema() -> dict[str, Any]:
-    from .models import NAME_RE, SERIAL_RE, PACKAGE_RE, TARGET_ACTIONS, WRITE_ACTIONS
-    string = {"type":"string", "minLength":1, "maxLength":2048}
-    filename = {"type":"string", "pattern":r"^[^./\\][^/\\]*$", "maxLength":128}
-    properties: dict[str, Any] = {
-        "selector":dict(string), "alternatives":{"type":"array", "maxItems":8, "items":{**string,"maxLength":2047}},
-        "value":{"type":"string", "maxLength":10000}, "checked":{"type":["boolean","string"]},
-        "text":dict(string), "as":{"type":"string","pattern":NAME_RE.pattern},
-        "filename":filename, "image":filename, "url":dict(string), "targetSelector":dict(string),
-        "frame":dict(string), "frames":{"type":"array","minItems":1,"maxItems":10,"items":dict(string)}, "keys":{"type":"array","minItems":1,"maxItems":5,"items":{"type":"string","pattern":"^[a-z0-9_]{1,20}$"}},
-        "key":{**string,"maxLength":45}, "by":{"enum":["text","resource-id","content-desc"]},
-        "direction":{"enum":["forward","backward"]},
-        "timeoutMs":{"type":"integer","minimum":100,"maximum":120000},
-        "durationMs":{"type":"integer","minimum":100,"maximum":120000},
-        "retryDelayMs":{"type":"integer","minimum":100,"maximum":10000},
-        "retries":{"type":"integer","minimum":0,"maximum":3},
-        "index":{"type":"integer","minimum":0,"maximum":20},
-        "delta":{"type":"integer","minimum":-100,"maximum":100},
-    }
-    for key in ("x","y","x2","y2"):
-        properties[key]={"type":"integer","minimum":0,"maximum":16384}
-    for key in ("role","label","textHint"):
-        properties[key]={**string,"maxLength":150}
-    for key in UI:
-        properties[key]={**string,"maxLength":200}
-    definitions={}
-    for target, actions in TARGET_ACTIONS.items():
-        variants=[]
-        for action in sorted(actions):
-            allowed, required=action_contract(target,action)
-            fields={key:properties[key] for key in sorted(allowed-{"action"})}
-            fields["action"]={"const":action}
-            if target=="android" and "selector" in fields:
-                fields["selector"]={**string,"maxLength":300}
-            if action in {"set_text","scroll_node"}:
-                fields["by"]={"enum":["resource-id","content-desc"]}
-            item={"type":"object","additionalProperties":False,"properties":fields,"required":sorted(required)}
-            if "frames" in fields:
-                item["not"] = {"required":["frame","frames"]}
-            if action.startswith("ui_"):
-                item["anyOf"]=[{"required":["automationId"]},{"required":["name"]}]
-            if action in RETRY:
-                item["dependentRequired"]={"retryDelayMs":["retries"]}
-            variants.append(item)
-        definitions[target+"Step"]={"oneOf":variants}
-    input_spec={"type":"object","additionalProperties":False,"properties":{
-        "type":{"enum":["string","number","boolean"]},"required":{"type":"boolean"},"secret":{"type":"boolean"},
-        "description":{"type":"string","maxLength":200},"default":{"type":["string","number","boolean"]}},
-        "allOf":[{"if":{"properties":{"secret":{"const":True}},"required":["secret"]},"then":{"not":{"required":["default"]}}}]}
-    root={"$schema":"https://json-schema.org/draft/2020-12/schema","$id":"https://github.com/karemfree1282-gif/human2api/schemas/workflow.schema.json",
-        "title":"Human2API portable workflow v1", "description":"Generated action shapes; the runtime additionally checks templates, hosts, filenames and values.",
-        "type":"object","additionalProperties":False,"required":["schemaVersion","name","description","steps"],
-        "properties":{"$schema":{"type":"string"},"schemaVersion":{"const":1},"name":{"type":"string","pattern":NAME_RE.pattern},
-            "description":{**string,"maxLength":300},"target":{"enum":list(TARGET_ACTIONS)},
-            "permissions":{"enum":["read","write"]},"startUrl":{**string,"pattern":"^https?://"},
-            "allowedHosts":{"type":"array","minItems":1,"maxItems":30,"items":{"type":"string","minLength":1,"pattern":"^[a-z0-9.-]+$"}},
-            "deviceSerial":{"type":"string","pattern":SERIAL_RE.pattern},"appPackage":{"type":"string","pattern":PACKAGE_RE.pattern},
-            "networkPolicy":{"enum":["navigation","strict"]},"allowSensitiveArtifacts":{"type":"boolean"},
-            "inputs":{"type":"object","maxProperties":80,"propertyNames":{"pattern":NAME_RE.pattern},"additionalProperties":input_spec},
-            "steps":{"type":"array","minItems":1,"maxItems":250}},"$defs":definitions,"allOf":[]}
-    for target in TARGET_ACTIONS:
-        condition={"properties":{"target":{"const":target}},"required":["target"]}
-        if target=="browser":
-            condition={"anyOf":[condition,{"not":{"required":["target"]}}]}
-        rule={"properties":{"steps":{"items":{"$ref":"#/$defs/"+target+"Step"}}}}
-        if target=="browser":
-            rule["required"]=["startUrl"]
-            rule["not"]={"anyOf":[{"required":["deviceSerial"]},{"required":["appPackage"]}]}
-        else:
-            prohibited=["startUrl","allowedHosts","networkPolicy"]+(["deviceSerial","appPackage"] if target=="desktop" else [])
-            rule["not"]={"anyOf":[{"required":[field]} for field in prohibited]}
-        root["allOf"].append({"if":condition,"then":rule})
-    root["allOf"].extend([
-        {"if":{"properties":{"permissions":{"const":"read"}},"required":["permissions"]},"then":{"properties":{"steps":{"items":{"not":{"properties":{"action":{"enum":sorted(WRITE_ACTIONS)}},"required":["action"]}}}}}},
-        {"if":{"properties":{"steps":{"contains":{"properties":{"action":{"enum":["set_text","scroll_node"]}},"required":["action"]}}}},"then":{"required":["appPackage"]}}
-    ])
-    return root
+def is_sensitive_field_name(name: Optional[str]) -> bool:
+    if not name:
+        return False
+    norm = re.sub(r"[^a-z0-9_]", "_", name.lower()).strip("_")
+    for token in SENSITIVE_KEY_NAMES:
+        if norm == token or norm.endswith(f"_{token}") or norm.startswith(f"{token}_") or token in norm.split("_"):
+            return True
+    return False
+
+
+def redact_secrets(text: str, secret_values: Optional[Set[str]] = None) -> str:
+    """Ensure no known secret value or bearer token leaks into logs or error messages."""
+    if not text:
+        return text
+    out = str(text)
+    if secret_values:
+        for val in sorted(secret_values, key=len, reverse=True):
+            if val and len(val) >= 3:
+                out = out.replace(val, REDACTED_PLACEHOLDER)
+    # Redact Authorization Bearer / token query params
+    out = re.sub(r"(Bearer\s+)[A-Za-z0-9._~+/=-]+", r"\1" + REDACTED_PLACEHOLDER, out, flags=re.IGNORECASE)
+    out = re.sub(
+        r"((?:password|secret|token|api_key|apikey)\s*[=:]\s*)([^\s&\"',;]+)",
+        r"\1" + REDACTED_PLACEHOLDER,
+        out,
+        flags=re.IGNORECASE,
+    )
+    return out
+
+
+def validate_url_against_policy(
+    url: str,
+    allowed_hosts: List[str],
+    network_policy: str = "strict",
+) -> None:
+    """Validate target URL against workflow networkPolicy and allowedHosts."""
+    parsed = urllib.parse.urlparse(url)
+    scheme = (parsed.scheme or "").lower()
+    if scheme in ("javascript", "vbscript", "file"):
+        raise PermissionError(f"Disallowed URL scheme in workflow navigation: {scheme!r}")
+    if scheme == "about" and url == "about:blank":
+        return
+    if scheme not in ("http", "https", "data"):
+        raise PermissionError(f"Unsupported URL scheme: {scheme!r}")
+    if scheme == "data":
+        return
+
+    host = (parsed.hostname or "").lower()
+    if not host:
+        raise PermissionError(f"URL is missing hostname: {url!r}")
+
+    if network_policy in ("strict", "navigation-only") and allowed_hosts:
+        normalized_allowed = {h.lower().strip() for h in allowed_hosts if h.strip()}
+        # Treat local loopback aliases equivalently when loopback is explicitly allowed
+        loopback_aliases = {"127.0.0.1", "127.0.0.2", "localhost", "::1"}
+        if normalized_allowed & loopback_aliases and host in loopback_aliases:
+            return
+        matched = False
+        for pattern in normalized_allowed:
+            if pattern == host:
+                matched = True
+                break
+            if pattern.startswith("*.") and host.endswith(pattern[1:]):
+                matched = True
+                break
+        if not matched:
+            raise PermissionError(
+                f"Host {host!r} is not permitted by allowedHosts={sorted(normalized_allowed)} under networkPolicy={network_policy!r}"
+            )
+
+
+def safe_resolve_user_path(base_dir: pathlib.Path, user_path: str) -> pathlib.Path:
+    """Resolve a file upload/download path strictly inside base_dir, preventing Path Traversal and symlink escapes."""
+    if not user_path or "\x00" in user_path:
+        raise PermissionError("Invalid or empty file path.")
+    base_resolved = base_dir.resolve()
+    candidate = (base_resolved / user_path).resolve()
+    try:
+        candidate.relative_to(base_resolved)
+    except ValueError as exc:
+        raise PermissionError(f"Path traversal blocked: {user_path!r} escapes {base_resolved}") from exc
+    return candidate
+
+
+@dataclass
+class StepExecutionRecord:
+    step_id: str
+    action: str
+    status: str  # "passed", "failed", "healed", "cancelled"
+    duration_ms: float
+    selector_used: Optional[str] = None
+    healing_tier: Optional[int] = None
+    extracted_value: Any = None
+    error: Optional[str] = None
+
+    def to_dict(self, secret_values: Optional[Set[str]] = None) -> Dict[str, Any]:
+        return {
+            "step_id": self.step_id,
+            "action": self.action,
+            "status": self.status,
+            "duration_ms": round(self.duration_ms, 2),
+            "selector_used": self.selector_used,
+            "healing_tier": self.healing_tier,
+            "extracted_value": redact_secrets(str(self.extracted_value), secret_values)
+            if self.extracted_value is not None
+            else None,
+            "error": redact_secrets(self.error, secret_values) if self.error else None,
+        }
+
+
+@dataclass
+class WorkflowRunReport:
+    workflow_name: str
+    target: str
+    status: str  # "passed", "failed", "cancelled"
+    duration_ms: float
+    steps: List[StepExecutionRecord] = field(default_factory=list)
+    assertions_passed: int = 0
+    assertions_failed: int = 0
+    healing_events: List[Dict[str, Any]] = field(default_factory=list)
+    outputs: Dict[str, Any] = field(default_factory=dict)
+    error: Optional[str] = None
+
+    def to_dict(self, secret_values: Optional[Set[str]] = None) -> Dict[str, Any]:
+        return {
+            "workflow_name": self.workflow_name,
+            "target": self.target,
+            "status": self.status,
+            "duration_ms": round(self.duration_ms, 2),
+            "steps": [s.to_dict(secret_values) for s in self.steps],
+            "assertions_passed": self.assertions_passed,
+            "assertions_failed": self.assertions_failed,
+            "healing_events": self.healing_events,
+            "outputs": {
+                k: redact_secrets(str(v), secret_values) if isinstance(v, str) else v
+                for k, v in self.outputs.items()
+            },
+            "error": redact_secrets(self.error, secret_values) if self.error else None,
+        }

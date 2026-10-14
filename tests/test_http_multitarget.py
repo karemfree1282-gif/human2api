@@ -1,59 +1,27 @@
-import json
-from urllib.request import Request, urlopen
-from urllib.error import HTTPError
+import pathlib, tempfile, unittest, urllib.request, json
+from human2api.http_server import Human2APIServer
+from human2api.workspace import Workspace
 
-from human2api.models import save_workflow
-
-
-def json_call(url, token, path):
-    req = Request(url + path, headers={'X-H2A-Token':token})
-    with urlopen(req,timeout=3) as response:
-        return json.load(response)
-
-
-def test_api_platform_catalog_and_openapi(local_server):
-    server, folder, url = local_server
-    platforms = json_call(url, server.token, '/api/platforms')
-    assert 'android' in platforms and 'desktop' in platforms
-    assert json_call(url, server.token, '/api/catalog') == {'packages': []}
-    schema = json_call(url, server.token, '/api/openapi.json')
-    assert schema['openapi'] == '3.1.0'
-
-
-def test_get_platforms_rejects_no_token(local_server):
-    server, folder, url = local_server
-    try:
-        json_call(url, '', '/api/platforms')
-        assert False, 'Expected 401'
-    except HTTPError as exc:
-        assert exc.code == 401
-
-
-def test_multi_target_schema_in_openapi(local_server):
-    server, folder, url = local_server
-    save_workflow(folder/'phone.json', {
-        'schemaVersion':1, 'name':'phone', 'description':'Take a screenshot',
-        'target':'android', 'permissions':'read', 'inputs':{},
-        'steps':[{'action':'screenshot'}],
-    })
-    schema = json_call(url, server.token, '/api/openapi.json')
-    info = schema['paths']['/api/run/phone']['post']['requestBody']['content']['application/json']['schema']
-    assert 'aiHeal' in info['properties']
-    assert 'approve' in info['properties']
-
-
-def test_public_catalog_view_is_token_protected_and_read_only(local_server, monkeypatch):
-    server, folder, url = local_server
-    from human2api import http_server
-    from unittest.mock import Mock
-    fake = Mock(return_value=[{"name": "create_invoice", "target": "browser", "description": "Sample"}])
-    monkeypatch.setattr(http_server, "remote_catalog", fake)
-    data = json_call(url, server.token, "/api/catalog/remote")
-    assert data["packages"][0]["name"] == "create_invoice"
-    fake.assert_called_once()
-    try:
-        json_call(url, "", "/api/catalog/remote")
-    except HTTPError as exc:
-        assert exc.code == 401
-    else:
-        raise AssertionError("unauthenticated remote catalog request was accepted")
+class TestHttpMultiTargetCompile(unittest.TestCase):
+    def test_record_compile_endpoint_creates_workflow(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Workspace(pathlib.Path(tmp))
+            srv = Human2APIServer(workspace=ws, host="127.0.0.1", port=0)
+            base = srv.start()
+            try:
+                payload = {
+                    "name": "API Compiled Task",
+                    "target": "windows-uia",
+                    "save": True,
+                    "events": [{"action": "click", "automation_id": "btnOk", "role": "button", "accessible_name": "OK"}],
+                }
+                req = urllib.request.Request(
+                    f"{base}/api/v1/record/compile",
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={"X-H2A-Token": srv.auth_token, "Content-Type": "application/json", "Host": f"127.0.0.1:{srv.port}"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    self.assertEqual(resp.status, 201)
+            finally:
+                srv.stop()

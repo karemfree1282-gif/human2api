@@ -1,56 +1,81 @@
-"""Sequential, fail-fast batch replay. Inputs stay in memory, not in reports."""
+"""Batch execution helper and Load/Soak Stability Harness for Human2API."""
+
 from __future__ import annotations
-import csv
-import json
-from pathlib import Path
-from typing import Any, Callable
 
-from .models import WorkflowError, validate_inputs
-from .runner import run_workflow
+import concurrent.futures
+import pathlib
+import tempfile
+import time
+import urllib.request
+from typing import Any, Dict, List
 
-
-def read_rows(path: Path, workflow: dict[str, Any], *, limit: int = 1000) -> list[dict[str, Any]]:
-    if path.stat().st_size > 8 * 1024 * 1024:
-        raise WorkflowError("batch input file exceeds 8 MiB")
-    text = path.read_text(encoding="utf-8-sig")
-    if path.suffix.lower() == ".csv":
-        import io
-        rows = list(csv.DictReader(io.StringIO(text)))
-        for row in rows:
-            for key, spec in workflow.get("inputs", {}).items():
-                if key not in row:
-                    continue
-                if spec.get("type") == "number":
-                    try:
-                        row[key] = float(row[key])
-                    except (ValueError, TypeError) as exc:
-                        raise WorkflowError("CSV number conversion failed") from exc
-                elif spec.get("type") == "boolean":
-                    if str(row[key]).lower() not in {"true", "false"}:
-                        raise WorkflowError("CSV booleans must be true or false")
-                    row[key] = str(row[key]).lower() == "true"
-    elif path.suffix.lower() == ".jsonl":
-        rows = [json.loads(x) for x in text.splitlines() if x.strip()]
-    else:
-        rows = json.loads(text)
-    if not isinstance(rows, list) or not 1 <= len(rows) <= limit:
-        raise WorkflowError(f"batch must have 1-{limit} rows")
-    # Validate the entire input before making the first side effect.
-    return [validate_inputs(workflow, row) for row in rows]
+from human2api.contracts import WorkflowRunReport
+from human2api.execution import CancellationToken
+from human2api.http_server import Human2APIServer
+from human2api.models import Workflow
+from human2api.runner import WorkflowRunner
+from human2api.server_limits import RateLimiter
+from human2api.workspace import Workspace
 
 
-def run_batch(workflow: dict[str, Any], rows: list[dict[str, Any]], *, approve: bool = False,
-              artifacts_dir: Path = Path("runs"), runner: Callable = run_workflow) -> dict[str, Any]:
-    valid = [validate_inputs(workflow, row) for row in rows]
-    if not valid or len(valid) > 1000:
-        raise WorkflowError("batch must have 1-1000 rows")
-    records = []
-    for ordinal, inputs in enumerate(valid, 1):
+def run_workflow_batch(
+    runner: WorkflowRunner,
+    workflow: Workflow,
+    parameter_rows: List[Dict[str, Any]],
+    allow_write: bool = False,
+    stop_on_first_failure: bool = True,
+) -> List[WorkflowRunReport]:
+    reports: List[WorkflowRunReport] = []
+    for row in parameter_rows:
+        rep = runner.run(workflow, inputs=row, allow_write=allow_write, cancel_token=CancellationToken())
+        reports.append(rep)
+        if stop_on_first_failure and rep.status != "passed":
+            break
+    return reports
+
+
+def run_soak_test(num_requests: int = 40, concurrency: int = 6) -> dict:
+    with tempfile.TemporaryDirectory(prefix="h2a_soak_") as tmp:
+        ws = Workspace(pathlib.Path(tmp))
+        limiter = RateLimiter(max_requests_per_window=200, window_seconds=10.0, max_concurrent=16)
+        srv = Human2APIServer(workspace=ws, host="127.0.0.1", port=0, rate_limiter=limiter)
+        base = srv.start()
+        latencies = []
+        errors = 0
         try:
-            result = runner(workflow, inputs, approve_writes=approve, artifacts_dir=artifacts_dir)
-            records.append({"row": ordinal, "ok": True, "runId": result["runId"]})
-        except (WorkflowError, OSError) as exc:
-            records.append({"row": ordinal, "ok": False, "errorType": type(exc).__name__})
-            return {"ok": False, "completed": ordinal - 1, "total": len(valid), "runs": records,
-                    "message": "Stopped at the first failed row; no automatic retry of side effects"}
-    return {"ok": True, "completed": len(records), "total": len(valid), "runs": records}
+            def _one_call(_i: int) -> float:
+                t0 = time.perf_counter()
+                req = urllib.request.Request(
+                    f"{base}/api/v1/health",
+                    headers={"X-H2A-Token": srv.auth_token, "Host": f"127.0.0.1:{srv.port}"},
+                )
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    assert resp.status == 200
+                return (time.perf_counter() - t0) * 1000.0
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as pool:
+                futs = [pool.submit(_one_call, i) for i in range(num_requests)]
+                for f in concurrent.futures.as_completed(futs):
+                    try:
+                        latencies.append(f.result())
+                    except Exception:
+                        errors += 1
+
+            cancel_t0 = time.perf_counter()
+            tok = CancellationToken()
+            cb_called = []
+            tok.register_callback(lambda: cb_called.append(True))
+            tok.cancel("soak test cancel")
+            cancel_latency_ms = (time.perf_counter() - cancel_t0) * 1000.0
+
+            return {
+                "requests_total": num_requests,
+                "requests_succeeded": len(latencies),
+                "errors": errors,
+                "avg_latency_ms": round(sum(latencies) / max(1, len(latencies)), 2),
+                "max_latency_ms": round(max(latencies) if latencies else 0.0, 2),
+                "cancellation_latency_ms": round(cancel_latency_ms, 3),
+                "callback_invoked": bool(cb_called),
+            }
+        finally:
+            srv.stop()

@@ -1,214 +1,375 @@
-'use strict';
-const TOKEN = document.querySelector('meta[name="h2a-token"]').content;
-const $ = (id) => document.getElementById(id);
-const state = {workflows: [], selected: null, definition: null, tab: 'run'};
-$('record-url').value = window.location.origin + '/demo';
-async function api(path, options = {}) {
-  const response = await fetch(path, {
-    ...options,
-    headers: {'X-H2A-Token': TOKEN, ...(options.body ? {'Content-Type':'application/json'} : {}), ...(options.headers || {})}
-  });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || 'Request failed');
-  return data;
-}
-let toastTimer;
-function toast(message) { const node=$('toast'); node.textContent=message; node.classList.add('visible'); clearTimeout(toastTimer); toastTimer=setTimeout(()=>node.classList.remove('visible'),3500); }
-function node(tag, props={}, children=[]) { const element=document.createElement(tag); for(const [k,v] of Object.entries(props)) { if(k==='text') element.textContent=v; else if(k==='className') element.className=v; else if(k==='onclick') element.addEventListener('click',v); else element.setAttribute(k,v); } for(const child of children) element.append(child); return element; }
-async function refresh() {
-  try {
-    const data=await api('/api/workflows');
-    state.workflows=data.workflows;
-    const picker=$('schedule-name');
-    picker.replaceChildren(...data.workflows.map(w=>node('option',{value:w.name,text:w.name+' ('+w.permissions+')'})));
-    $('metric-workflows').textContent=data.workflows.length;
-    $('metric-actions').textContent=data.workflows.reduce((sum,x)=>sum+x.steps,0);
-    $('nav-count').textContent=data.workflows.length;
-    drawList();
-    if(state.selected && data.workflows.some(x=>x.name===state.selected)) await selectWorkflow(state.selected);
-    else if(data.workflows.length) await selectWorkflow(data.workflows[0].name);
-    else { state.selected=null; $('details').replaceChildren(node('div',{className:'empty-detail'},[node('div',{className:'empty-icon',text:'{ }'}),node('h3',{text:'Create your first workflow'}),node('p',{text:'Click New recording to capture a task, or try the included demo.'})])); }
-  } catch(err){toast('Cannot load workflows: '+err.message);}
-}
-function drawList() {
-  const list=$('workflow-list'); list.replaceChildren();
-  if(!state.workflows.length){list.append(node('p',{className:'empty-state',text:'No workflows found. Record one to get started.'}));return;}
-  for(const workflow of state.workflows) {
-    const entry=node('button',{className:'workflow-entry'+(state.selected===workflow.name?' selected':''),onclick:()=>selectWorkflow(workflow.name)});
-    const icon=node('div',{className:'workflow-icon',text:'⌁'});
-    const info=node('div',{className:'workflow-info'},[
-      node('strong',{text:workflow.name}), node('span',{text:workflow.description}), node('small',{className:'workflow-meta',text:`${(workflow.target||'browser').toUpperCase()} · ${workflow.steps} actions · ${workflow.inputs} inputs · ${workflow.permissions}`})
-    ]);
-    entry.append(icon,info);list.append(entry);
+(() => {
+  const state = {
+    lang: "ar",
+    theme: "dark",
+    activeRunId: null,
+    editorSteps: [
+      { action: "goto", url: "/demo", selector: null },
+      { action: "type", selector: "#customer-name", text: "${input:customer}", role: "textbox", name: "اسم العميل" },
+      { action: "type", selector: "#invoice-amount", text: "${input:amount}", role: "textbox", name: "قيمة الفاتورة" },
+      { action: "click", selector: "#submit-invoice-btn", role: "button", name: "إصدار الفاتورة" },
+      { action: "assert_text", selector: "#invoice-result", expected: "${input:customer}", match: "contains" }
+    ],
+    editorInputs: {
+      customer: { type: "string", required: true, sensitive: false, default: "شركة النور" },
+      amount: { type: "string", required: true, sensitive: false, default: "450" }
+    }
+  };
+
+  const i18n = {
+    ar: {
+      appTitle: "Human2API Studio",
+      appSubtitle: "علّم الكمبيوتر أو المتصفح أو الهاتف مهمة مرة واحدة، وحوّلها إلى API وأداة MCP",
+      recordNewTask: "تسجيل مهمة جديدة",
+      tabDashboard: "لوحة التحكم (Dashboard)",
+      tabEditor: "محرر المهام البصري (Workflow Editor)",
+      tabSchedules: "المهام المجدولة (Schedules)",
+      tabHistory: "سجل التشغيل (History)",
+      tabMarketplace: "متجر الأدوات (Marketplace)",
+      tabSettings: "الخصوصية والصلاحيات (Privacy & Security)"
+    },
+    en: {
+      appTitle: "Human2API Studio",
+      appSubtitle: "Teach your browser, desktop, or Android phone once — reuse via REST API & MCP",
+      recordNewTask: "Record New Task",
+      tabDashboard: "Dashboard",
+      tabEditor: "Visual Workflow Editor",
+      tabSchedules: "Scheduled Tasks",
+      tabHistory: "Run History",
+      tabMarketplace: "Marketplace",
+      tabSettings: "Privacy & Permissions"
+    }
+  };
+
+  async function apiCall(path, method = "GET", body = null) {
+    const headers = {
+      "X-H2A-Token": window.__H2A_TOKEN__ || "",
+      "Content-Type": "application/json"
+    };
+    const opts = { method, headers };
+    if (body !== null) opts.body = JSON.stringify(body);
+    const resp = await fetch(path, opts);
+    const data = await resp.json().catch(() => ({}));
+    return { status: resp.status, data };
   }
-}
-async function selectWorkflow(name) {
-  try { state.definition=await api('/api/workflows/'+encodeURIComponent(name)); state.selected=name; state.tab='run'; drawList();drawDetails();}
-  catch(err){toast(err.message);}
-}
-function drawDetails() {
-  const wf=state.definition;if(!wf)return;
-  const details=$('details');details.replaceChildren();
-  const header=node('div',{className:'details-head'},[node('span',{className:'eyebrow eyebrow-small',text:'WORKFLOW DETAIL'}),node('span',{className:'tag'+(wf.permissions==='write'?' write':''),text:wf.permissions==='write'?'WRITE ACCESS':'READ ONLY'})]);
-  details.append(header,node('h3',{text:wf.name}),node('p',{text:wf.description}));
-  const tabs=node('div',{className:'detail-tabs'});
-  for(const item of ['run','steps','json']) tabs.append(node('button',{className:state.tab===item?'current':'',onclick:()=>{state.tab=item;drawDetails();},text:item==='json'?'Edit JSON':item==='steps'?'Steps':'Run workflow'}));
-  details.append(tabs);
-  const body=node('div');details.append(body);
-  if(state.tab==='steps') {
-    for(const [i,step] of wf.steps.entries()) body.append(node('div',{className:'step-line'},[node('b',{text:String(i+1).padStart(2,'0')}),node('span',{text:`${step.action}   ${step.selector || step.url || step.filename || (Number.isInteger(step.x)?`(${step.x}, ${step.y})`: '')}`})]));
-    body.append(node('div',{className:'detail-note',text:'All steps can be inspected and edited in JSON. AI healing is disabled by default and needs per-run consent.'}));
-    return;
-  }
-  if(state.tab==='json') {
-    const area=node('textarea',{className:'editor','aria-label':'Workflow JSON'});area.value=JSON.stringify(wf,null,2);
-    const save=node('button',{className:'button button-primary',text:'Save workflow',onclick:async()=>{
-      try {const parsed=JSON.parse(area.value);await api('/api/save/'+encodeURIComponent(wf.name),{method:'POST',body:JSON.stringify(parsed)});toast('Workflow saved');await selectWorkflow(wf.name);}catch(err){toast('Could not save: '+err.message);}
-    }});
-    body.append(area,node('div',{className:'workflow-run-footer'},[node('div',{className:'detail-note',text:'Workflow files contain actions, not recorded form values.'}),save]));return;
-  }
-  const form=node('form'); const fields=node('div',{className:'field-grid'});const inputRefs={};
-  for(const [key,spec] of Object.entries(wf.inputs||{})) {
-    const holder=node('div');const label=node('label',{text:key});
-    const id='in-'+key;label.setAttribute('for',id);
-    const input=node('input',{id,type:spec.secret?'password':spec.type==='number'?'number':spec.type==='boolean'?'checkbox':'text',placeholder:spec.description||key});
-    if(spec.type==='number')input.step='any';
-    if(spec.default!==undefined && spec.type!=='boolean')input.value=spec.default;
-    if(spec.type==='boolean')input.checked=spec.default===true;
-    if(spec.required!==false)input.required=true;
-    inputRefs[key]={input,spec};holder.append(label,input);fields.append(holder);
-  }
-  if(!Object.keys(inputRefs).length) fields.append(node('div',{className:'detail-note',text:'This workflow needs no parameters.'}));
-  form.append(fields);
-  const approvalWrap=node('label',{className:'approve-label'});const approval=node('input',{type:'checkbox'});approvalWrap.append(approval,node('span',{text:'I approve this workflow to interact with the selected '+(wf.target||'browser')+' target.'}));
-  if(wf.permissions!=='write')approvalWrap.style.display='none';
-  const healWrap=node('label',{className:'approve-label'}), heal=node('input',{type:'checkbox'});
-  healWrap.append(heal,node('span',{text:'Enable local semantic selector recovery (browser only)'}));
-  const aiWrap=node('label',{className:'approve-label'}), ai=node('input',{type:'checkbox'});
-  aiWrap.append(ai,node('span',{text:'Allow AI recovery: send sanitized UI element metadata to configured AI endpoint (browser only)'}));
-  if((wf.target||'browser') !== 'browser'){healWrap.style.display='none';aiWrap.style.display='none';}
-  ai.addEventListener('change',()=>{if(ai.checked)heal.checked=true;});
-  const runButton=node('button',{className:'button button-primary',type:'submit',text:'▶  Run now'});
-  const cancelButton=node('button',{className:'button button-soft',type:'button',text:'■  Cancel run'});
-  cancelButton.disabled=true;
-  let activeRunId=null;
-  cancelButton.addEventListener('click',async()=>{
-    if(!activeRunId)return;
-    try { const result=await api('/api/runs/'+activeRunId+'/cancel',{method:'POST',body:'{}'});
-      output.textContent='Cancellation requested. Waiting for the current action to finish safely…';
-      cancelButton.disabled=true;
-    } catch(err){toast('Could not cancel: '+err.message);}
-  });
-  form.append(healWrap,aiWrap,node('div',{className:'workflow-run-footer'},[approvalWrap,cancelButton,runButton]));
-  const output=node('pre',{className:'run-output',text:'Ready. Runs locally on your '+(wf.target||'browser')+' engine. Check permissions before executing.'});
-  form.addEventListener('submit',async event=>{
-    event.preventDefault();if(wf.permissions==='write'&&!approval.checked){toast('Approve write actions before running.');return;}
-    const args={}; for(const [key,{input,spec}] of Object.entries(inputRefs)){ if(spec.type==='boolean')args[key]=input.checked; else if(spec.type==='number')args[key]=Number(input.value); else if(input.value!=='')args[key]=input.value; }
-    try {runButton.disabled=true;output.textContent='Executing '+(wf.target||'browser')+' workflow...';const r=await api('/api/run/'+encodeURIComponent(wf.name),{method:'POST',body:JSON.stringify({inputs:args,approve:approval.checked,healSelectors:heal.checked,aiHeal:ai.checked})});
-      activeRunId=r.runId;cancelButton.disabled=false;
-      let polls=0;const poll=async()=>{const status=await api('/api/runs/'+r.runId);
-        if(['running','cancelling'].includes(status.state) && polls++<240){
-          const current=status.lastStep;
-          if(current)output.textContent=`${status.state} · step ${current.index}: ${current.action} (${current.state})`;
-          setTimeout(poll,500);return;
+
+  function renderEditorSteps() {
+    const ul = document.getElementById("editor-steps-list");
+    if (!ul) return;
+    ul.innerHTML = "";
+    state.editorSteps.forEach((st, idx) => {
+      const li = document.createElement("li");
+      const desc = `${idx + 1}. [${st.action}] ${st.selector || st.url || ""} ${st.text || st.expected || ""}`;
+      const span = document.createElement("span");
+      span.textContent = desc;
+      const controls = document.createElement("div");
+
+      const upBtn = document.createElement("button");
+      upBtn.className = "btn btn-outline";
+      upBtn.textContent = "↑";
+      upBtn.onclick = () => {
+        if (idx > 0) {
+          const tmp = state.editorSteps[idx - 1];
+          state.editorSteps[idx - 1] = state.editorSteps[idx];
+          state.editorSteps[idx] = tmp;
+          renderEditorSteps();
         }
-        activeRunId=null;cancelButton.disabled=true;
-        output.textContent=JSON.stringify(status,null,2);runButton.disabled=false;showHistory();
-      };await poll();
-    }catch(err){output.textContent='Error: '+err.message;runButton.disabled=false;cancelButton.disabled=true;activeRunId=null;}
+      };
+
+      const delBtn = document.createElement("button");
+      delBtn.className = "btn btn-danger";
+      delBtn.textContent = "✕";
+      delBtn.onclick = () => {
+        if (state.editorSteps.length > 1) {
+          state.editorSteps.splice(idx, 1);
+          renderEditorSteps();
+        }
+      };
+
+      controls.appendChild(upBtn);
+      controls.appendChild(delBtn);
+      li.appendChild(span);
+      li.appendChild(controls);
+      ul.appendChild(li);
+    });
+  }
+
+  function renderEditorInputs() {
+    const ul = document.getElementById("editor-inputs-list");
+    if (!ul) return;
+    ul.innerHTML = "";
+    Object.entries(state.editorInputs).forEach(([k, spec]) => {
+      const li = document.createElement("li");
+      li.textContent = `${k} (${spec.type}) ${spec.sensitive ? "[SECRET]" : `= ${spec.default || ""}`}`;
+      ul.appendChild(li);
+    });
+  }
+
+  async function refreshDashboard() {
+    const { status, data } = await apiCall("/api/v1/status");
+    if (status === 200) {
+      document.getElementById("stat-workflows-count").textContent = String(data.workflows_count || 0);
+      document.getElementById("stat-schedules-count").textContent = String(data.schedules_count || 0);
+      document.getElementById("stat-packages-count").textContent = String(data.installed_packages_count || 0);
+      document.getElementById("stat-vault-state").textContent = data.vault_unlocked ? "مفتوحة (Unlocked)" : "مقفلة (Locked)";
+    }
+    const wfRes = await apiCall("/api/v1/workflows");
+    const sel = document.getElementById("dashboard-workflow-select");
+    if (sel && wfRes.status === 200) {
+      sel.innerHTML = "";
+      (wfRes.data.workflows || []).forEach(wf => {
+        const opt = document.createElement("option");
+        opt.value = wf.filename || wf.name;
+        opt.textContent = `${wf.name} (${wf.target})`;
+        sel.appendChild(opt);
+      });
+    }
+  }
+
+  async function refreshHistory() {
+    const { status, data } = await apiCall("/api/v1/history");
+    const ul = document.getElementById("history-list");
+    if (!ul || status !== 200) return;
+    ul.innerHTML = "";
+    (data.history || []).forEach(h => {
+      const li = document.createElement("li");
+      li.textContent = `${h.workflow_name} [${h.target}] — ${h.status.toUpperCase()} (${h.duration_ms} ms) ${h.error ? " | سبب الخطأ: " + h.error : ""}`;
+      ul.appendChild(li);
+    });
+  }
+
+  async function refreshSchedules() {
+    const { status, data } = await apiCall("/api/v1/schedules");
+    const ul = document.getElementById("schedules-list");
+    if (!ul || status !== 200) return;
+    ul.innerHTML = "";
+    (data.schedules || []).forEach(job => {
+      const li = document.createElement("li");
+      const span = document.createElement("span");
+      span.textContent = `${job.workflow_name} — كل ${job.interval_seconds} ثانية (${job.enabled ? "نشط" : "متوقف"})`;
+      const del = document.createElement("button");
+      del.className = "btn btn-danger";
+      del.textContent = "حذف";
+      del.onclick = async () => {
+        await apiCall(`/api/v1/schedules/${job.job_id}`, "DELETE");
+        refreshSchedules();
+        refreshDashboard();
+      };
+      li.appendChild(span);
+      li.appendChild(del);
+      ul.appendChild(li);
+    });
+  }
+
+  async function refreshMarketplace() {
+    const q = (document.getElementById("mp-search-input")?.value || "").trim();
+    const { status, data } = await apiCall(`/api/v1/marketplace/packages?q=${encodeURIComponent(q)}`);
+    const ul = document.getElementById("marketplace-catalog-list");
+    if (ul && status === 200) {
+      ul.innerHTML = "";
+      (data.packages || []).forEach(pkg => {
+        const li = document.createElement("li");
+        const span = document.createElement("span");
+        span.textContent = `${pkg.tool_id}@${pkg.version} [${pkg.target}] ★${pkg.avg_rating} — الناشر: ${pkg.publisher_id}`;
+        const instBtn = document.createElement("button");
+        instBtn.className = "btn btn-primary";
+        instBtn.textContent = "تثبيت موثق";
+        instBtn.onclick = async () => {
+          await apiCall("/api/v1/marketplace/install", "POST", { tool_id: pkg.tool_id, version: pkg.version, allowPrivilegeExpansion: true });
+          refreshMarketplace();
+          refreshDashboard();
+        };
+        li.appendChild(span);
+        li.appendChild(instBtn);
+        ul.appendChild(li);
+      });
+    }
+    const instRes = await apiCall("/api/v1/marketplace/installed");
+    const instUl = document.getElementById("marketplace-installed-list");
+    if (instUl && instRes.status === 200) {
+      instUl.innerHTML = "";
+      (instRes.data.installed || []).forEach(item => {
+        const li = document.createElement("li");
+        li.textContent = `${item.tool_id}@${item.version} (SHA256: ${String(item.workflow_sha256).slice(0, 12)}...)`;
+        instUl.appendChild(li);
+      });
+    }
+  }
+
+  // Wire up navigation tabs
+  document.querySelectorAll(".nav-tab").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".nav-tab").forEach(b => b.classList.remove("active"));
+      document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
+      btn.classList.add("active");
+      const tab = btn.getAttribute("data-tab");
+      document.getElementById(`panel-${tab}`)?.classList.add("active");
+    });
   });
-  body.append(form,output);
-}
-$('new-record').addEventListener('click',()=>$('recorder-dialog').showModal());
-for(const x of document.querySelectorAll('[data-close]'))x.addEventListener('click',()=>$('recorder-dialog').close());
-$('recorder-form').addEventListener('submit',async event=>{
-  event.preventDefault();const url=$('record-url').value;const name=$('record-name').value;
-  try {const response=await api('/api/record',{method:'POST',body:JSON.stringify({url,name})});$('recorder-feedback').textContent=response.message;toast('Recorder launched');
-    let attempts=0;
-    const pollRecorder=async()=>{
-      if(attempts++>120) return;
-      try{const status=await api('/api/recorder');
-        if(status.running){setTimeout(pollRecorder,1000);return;}
-        if(status.exitCode===0){toast('Recording saved');$('recorder-dialog').close();await refresh();}
-        else $('recorder-feedback').textContent='Recorder exited without saving. Try the CLI to see the error.';
-      }catch(err){$('recorder-feedback').textContent=err.message;}
-    };setTimeout(pollRecorder,1500);}
-  catch(err){$('recorder-feedback').textContent=err.message;}
-});
-$('refresh').addEventListener('click',refresh);
-$('spec-link').addEventListener('click', async (event) => {
-  event.preventDefault();
-  try {
-    const spec=await api('/api/openapi.json');
-    const url=URL.createObjectURL(new Blob([JSON.stringify(spec,null,2)],{type:'application/json'}));
-    window.open(url,'_blank','noopener,noreferrer');
-    setTimeout(()=>URL.revokeObjectURL(url),60000);
-  }catch(err){toast('OpenAPI error: '+err.message);}
-});
-$('copy-cli').addEventListener('click',async()=>{try{await navigator.clipboard.writeText($('cli-code').textContent);toast('Copied to clipboard');}catch(err){toast('Clipboard unavailable');}});
-refresh();
 
-async function updateEngineStatus(){
-  try{const p=await api('/api/platforms');
-    if($('desktop-status')) $('desktop-status').textContent=p.desktop.dependencyAvailable?'Desktop dependencies detected':'Install: pip install "human2api[desktop]"';
-    if($('android-status')) $('android-status').textContent=p.android.adbInstalled?'ADB installed. Connect an authorized phone':'Install Android platform-tools (ADB)';
-  }catch(err){ /* status is informational */ }
-}
-async function showCatalog(remote=false){
-  const destination=$('catalog-packages');if(!destination)return;
-  destination.replaceChildren(node('p',{text:remote?'Fetching public workflow index…':'Inspecting local packages…'}));
-  try{const catalog=await api(remote?'/api/catalog/remote':'/api/catalog');destination.replaceChildren();
-    if(!catalog.packages.length){destination.append(node('p',{text:remote?'Public workflow index is empty.':'No local workflow packages yet. Use: h2a pack create_invoice --output catalog/create_invoice.h2a.zip'}));return;}
-    for(const item of catalog.packages){
-      const elements=[node('strong',{text:item.name}),node('small',{text:`${item.target} · ${item.publisher} · ${remote?'SHA-256 pinned':'checksum verified'}`}),node('span',{text:item.description})];
-      if(remote)elements.push(node('code',{text:`h2a install-remote ${item.name} --approve`}));
-      destination.append(node('article',{className:'catalog-entry'},elements));
-    }
-  }catch(err){destination.textContent='Could not load catalog: '+err.message;}
-}
-async function showHistory(){
-  const destination=$('history-entries');if(!destination)return;
-  try{const result=await api('/api/history');destination.replaceChildren();
-    if(!result.history.length){destination.append(node('p',{text:'No executions yet. Start a local workflow to see metadata here.'}));return;}
-    for(const record of result.history.slice(0,12)){
-      const ts=new Date(record.createdAt*1000).toLocaleString();
-      const duration=record.durationMs==null?'—':`${record.durationMs} ms`;
-      destination.append(node('article',{className:'catalog-entry'},[node('strong',{text:record.workflow}),node('small',{text:`${record.target} · ${record.state}`}),node('span',{text:`${ts} · ${duration} · ${record.steps} steps`})]));
-    }
-  }catch(err){destination.textContent='Could not load run history: '+err.message;}
-}
-$('catalog-refresh')?.addEventListener('click',()=>showCatalog(false));
-$('catalog-public')?.addEventListener('click',()=>showCatalog(true));
-$('catalog-link')?.addEventListener('click',()=>showCatalog(false));
-$('history-refresh')?.addEventListener('click',showHistory);
-$('history-link')?.addEventListener('click',showHistory);
-updateEngineStatus();
-showCatalog(false);
-showHistory();
+  // Theme & Language toggles
+  document.getElementById("btn-toggle-theme")?.addEventListener("click", () => {
+    state.theme = state.theme === "dark" ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", state.theme);
+  });
 
-async function showSchedules(){
-  const host=$('scheduled-list');
-  try{
-    const data=await api('/api/schedules');host.replaceChildren();
-    if(!data.schedules.length){host.append(node('p',{text:'No recurring tasks configured.'}));return;}
-    for(const job of data.schedules){
-      const row=node('div',{className:'schedule-row'});
-      row.append(node('span',{text:`${job.name} · every ${job.everyMinutes} min · last: ${job.lastState||'never'} · next: ${new Date(job.nextRunAt*1000).toLocaleString()}`}));
-      row.append(node('button',{className:'button button-soft',text:'Remove',onclick:async()=>{
-        try{await api('/api/schedules/remove',{method:'POST',body:JSON.stringify({name:job.name})});
-          toast('Schedule removed');showSchedules();}catch(err){toast(err.message);}
-      }}));host.append(row);
+  document.getElementById("btn-toggle-lang")?.addEventListener("click", () => {
+    state.lang = state.lang === "ar" ? "en" : "ar";
+    document.documentElement.setAttribute("lang", state.lang);
+    document.documentElement.setAttribute("dir", state.lang === "ar" ? "rtl" : "ltr");
+    const dict = i18n[state.lang];
+    document.querySelectorAll("[data-i18n]").forEach(el => {
+      const k = el.getAttribute("data-i18n");
+      if (dict[k]) el.textContent = dict[k];
+    });
+  });
+
+  // Record Modal
+  document.getElementById("btn-record-new")?.addEventListener("click", () => {
+    document.getElementById("record-modal")?.classList.remove("hidden");
+  });
+  document.getElementById("btn-close-record-modal")?.addEventListener("click", () => {
+    document.getElementById("record-modal")?.classList.add("hidden");
+  });
+  document.getElementById("btn-confirm-record")?.addEventListener("click", async () => {
+    const name = document.getElementById("rec-task-name").value || "Recorded Workflow";
+    const target = document.getElementById("rec-task-target").value || "browser";
+    const res = await apiCall("/api/v1/record/compile", "POST", {
+      name,
+      target,
+      save: true,
+      events: [
+        { action: "goto", url: window.location.origin + "/demo" },
+        { action: "type", id: "customer-name", name_attr: "customer_name", value: "عميل مسجل" },
+        { action: "type", id: "api-password", name_attr: "api_password", input_type: "password", is_password: true, value: "SuperSecret" },
+        { action: "click", id: "submit-invoice-btn", accessible_name: "إصدار الفاتورة" }
+      ]
+    });
+    document.getElementById("record-modal")?.classList.add("hidden");
+    if (res.status === 201) {
+      document.getElementById("live-status-text").textContent = `تم تسجيل وحفظ المهمة بنجاح: ${res.data.workflow.name}`;
+      await refreshDashboard();
     }
-  }catch(err){host.replaceChildren(node('p',{text:'Schedules unavailable: '+err.message}));}
-}
-$('schedule-form').addEventListener('submit',async event=>{
-  event.preventDefault();
-  const name=$('schedule-name').value;
-  const interval=Number($('schedule-interval').value);
-  const path=$('schedule-data').value.trim();
-  try{await api('/api/schedules/add',{method:'POST',body:JSON.stringify({name,everyMinutes:interval,
-      dataFile:path||null,approve:$('schedule-approval').checked})});
-    toast('Schedule saved. Run h2a scheduler separately to start the worker.');showSchedules();
-  }catch(err){toast('Schedule not saved: '+err.message);}
-});
-showSchedules();
+  });
+
+  // Editor actions
+  document.getElementById("btn-add-step")?.addEventListener("click", () => {
+    const action = document.getElementById("new-step-action").value;
+    const selOrUrl = document.getElementById("new-step-selector").value.trim();
+    const val = document.getElementById("new-step-value").value.trim();
+    const step = { action };
+    if (action === "goto") step.url = selOrUrl || "/demo";
+    else step.selector = selOrUrl || "#submit-invoice-btn";
+    if (action === "assert_text") step.expected = val || "تم";
+    else if (val) step.text = val;
+    state.editorSteps.push(step);
+    renderEditorSteps();
+  });
+
+  document.getElementById("btn-add-input")?.addEventListener("click", () => {
+    const name = document.getElementById("new-input-name").value.trim();
+    const type = document.getElementById("new-input-type").value;
+    const def = document.getElementById("new-input-default").value;
+    if (!name) return;
+    state.editorInputs[name] = {
+      type,
+      required: true,
+      sensitive: type === "secret",
+      default: type === "secret" ? null : def
+    };
+    renderEditorInputs();
+  });
+
+  document.getElementById("btn-save-workflow")?.addEventListener("click", async () => {
+    const name = document.getElementById("wf-name-input").value.trim() || "مهمة جديدة";
+    const target = document.getElementById("wf-target-select").value;
+    const hosts = document.getElementById("wf-hosts-input").value.split(",").map(s => s.trim()).filter(Boolean);
+    const res = await apiCall("/api/v1/workflows", "POST", {
+      name,
+      target,
+      mode: "write",
+      allowedHosts: hosts,
+      inputs: state.editorInputs,
+      steps: state.editorSteps
+    });
+    if (res.status === 201) {
+      document.getElementById("live-status-text").textContent = `تم حفظ المهمة ${name} بنجاح.`;
+      await refreshDashboard();
+    }
+  });
+
+  // Run & Stop
+  document.getElementById("btn-run-selected")?.addEventListener("click", async () => {
+    const sel = document.getElementById("dashboard-workflow-select");
+    const wfName = sel?.value;
+    if (!wfName) return;
+    const allowWrite = document.getElementById("chk-allow-write").checked;
+    document.getElementById("live-status-text").textContent = "جاري تشغيل المهمة...";
+    const res = await apiCall("/api/v1/run", "POST", { workflowName: wfName, allowWrite });
+    state.activeRunId = res.data.run_id || null;
+    if (res.data.report) {
+      const rep = res.data.report;
+      document.getElementById("live-status-text").textContent =
+        rep.status === "passed"
+          ? `اكتملت المهمة بنجاح (${rep.steps.length} خطوات، ${rep.assertions_passed} تحققات)`
+          : `توقفت المهمة (${rep.status}): ${rep.error || ""}`;
+      await refreshHistory();
+    }
+  });
+
+  document.getElementById("btn-stop-run")?.addEventListener("click", async () => {
+    if (state.activeRunId) {
+      await apiCall(`/api/v1/runs/${state.activeRunId}/cancel`, "POST", {});
+    }
+    document.getElementById("live-status-text").textContent = "تم إرسال إشارة الإيقاف الفوري.";
+  });
+
+  // Schedules, History, Marketplace, Settings
+  document.getElementById("btn-create-schedule")?.addEventListener("click", async () => {
+    const wfName = document.getElementById("sched-wf-name").value.trim() || "Scheduled Task";
+    const interval = parseInt(document.getElementById("sched-interval").value || "60", 10);
+    await apiCall("/api/v1/schedules", "POST", {
+      workflowPath: `workflows/${wfName}.json`,
+      workflowName: wfName,
+      intervalSeconds: interval
+    });
+    await refreshSchedules();
+    await refreshDashboard();
+  });
+
+  document.getElementById("btn-refresh-history")?.addEventListener("click", refreshHistory);
+  document.getElementById("btn-mp-search")?.addEventListener("click", refreshMarketplace);
+
+  document.getElementById("btn-vault-unlock")?.addEventListener("click", async () => {
+    const passphrase = document.getElementById("vault-passphrase").value || "default-pass";
+    await apiCall("/api/v1/vault/unlock", "POST", { passphrase });
+    await refreshDashboard();
+  });
+
+  document.getElementById("btn-vault-lock")?.addEventListener("click", async () => {
+    await apiCall("/api/v1/vault/lock", "POST", {});
+    await refreshDashboard();
+  });
+
+  document.getElementById("btn-save-secret")?.addEventListener("click", async () => {
+    const name = document.getElementById("secret-key-input").value.trim();
+    const value = document.getElementById("secret-val-input").value;
+    if (name && value) {
+      await apiCall("/api/v1/vault/secrets", "POST", { name, value });
+      document.getElementById("secret-val-input").value = "";
+    }
+  });
+
+  document.getElementById("btn-save-settings")?.addEventListener("click", async () => {
+    const aiHealingConsent = document.getElementById("chk-ai-healing-consent").checked;
+    const networkPolicy = document.getElementById("sel-network-policy").value;
+    await apiCall("/api/v1/settings", "POST", { aiHealingConsent, networkPolicy });
+  });
+
+  renderEditorSteps();
+  renderEditorInputs();
+  refreshDashboard();
+  refreshSchedules();
+  refreshHistory();
+  refreshMarketplace();
+})();

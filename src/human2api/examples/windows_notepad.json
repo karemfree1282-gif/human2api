@@ -1,0 +1,53 @@
+{
+  "schemaVersion": "0.5",
+  "name": "Windows UIA Notepad Arabic & English Note",
+  "description": "Desktop UI Automation workflow entering bilingual text and saving via Accessibility controls.",
+  "version": "1.0.0",
+  "target": "windows-uia",
+  "mode": "write",
+  "allowedApps": ["Notepad", "محرر المهام - Task Editor"],
+  "inputs": {
+    "note_text": {
+      "type": "string",
+      "description": "Text to enter into the editor",
+      "required": true,
+      "sensitive": false,
+      "default": "مرحباً بكم في Human2API — Welcome"
+    }
+  },
+  "steps": [
+    {
+      "id": "step_1",
+      "action": "focus_window",
+      "windowTitle": "Notepad"
+    },
+    {
+      "id": "step_2",
+      "action": "type",
+      "selector": "automationId=\"document_editor\"",
+      "automationId": "document_editor",
+      "role": "textbox",
+      "name": "Text Editor",
+      "text": "${input:note_text}",
+      "isWriteAction": true
+    },
+    {
+      "id": "step_3",
+      "action": "click",
+      "selector": "automationId=\"save_button\"",
+      "automationId": "save_button",
+      "role": "button",
+      "name": "Save",
+      "idempotent": false,
+      "isWriteAction": true
+    }
+  ],
+  "assertions": [
+    {
+      "type": "assert_value",
+      "selector": "automationId=\"document_editor\"",
+      "expected": "${input:note_text}",
+      "match": "contains"
+    }
+  ]
+}

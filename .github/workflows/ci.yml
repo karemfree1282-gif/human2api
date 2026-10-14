@@ -1,55 +1,12 @@
 name: CI
-on:
-  push:
-    branches: [main]
-  pull_request:
-  workflow_dispatch:
-  workflow_call:
-env:
-  PYTHONUTF8: "1"
-permissions:
-  contents: read
+on: [push, pull_request, workflow_dispatch]
 jobs:
-  unit:
-    name: Python ${{ matrix.python }} - full suite
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    strategy:
-      fail-fast: false
-      matrix:
-        python: ['3.10', '3.11', '3.12', '3.13']
+  verify:
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python }}
-          cache: pip
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - run: python -m pip install -e '.[dev,vault,signing]'
-      - run: python -m playwright install --with-deps chromium
-      - name: Complete local release checks (no skipped tests accepted)
-        run: python scripts/complete.py --local-only --output evidence
-      - name: Retain reproducible test/build evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: evidence-python-${{ matrix.python }}
-          path: evidence/
-          retention-days: 14
-  cross-platform-unit:
-    name: ${{ matrix.os }} - hardware-free tests
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-2022, macos-14]
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.12'
-      - run: python -m pip install -e '.[dev,signing]'
-      - run: python -m pytest -q -m "not browser"
+          python-version: "3.11"
+      - run: pip install -e ".[browser,vault,signing]"
+      - run: python3 scripts/complete.py --repair

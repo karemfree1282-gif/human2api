@@ -1,164 +1,193 @@
 package dev.human2api.companion;
 
 import android.accessibilityservice.AccessibilityService;
-import android.app.*;
-import android.content.Intent;
-import android.os.*;
-import android.view.accessibility.*;
-import org.json.*;
-import java.io.*;
-import java.net.*;
+import android.os.Bundle;
+import android.os.SystemClock;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
+
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.InetAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.nio.charset.StandardCharsets;
-import java.security.*;
-import java.util.*;
-import java.util.concurrent.*;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 
-/** Explicit five-minute sessions, package-scoped actions, no key/text capture. */
-public final class CompanionService extends AccessibilityService {
-    public static volatile CompanionService instance;
-    private final Handler main=new Handler(Looper.getMainLooper());
-    private volatile boolean recording=false, armed=false;
-    private volatile long expires=0;
-    private volatile String token="", target="", recordedTarget="";
-    private ServerSocket server;
-    private JSONArray steps=new JSONArray();
-    private JSONObject inputs=new JSONObject();
-    private final Map<String,String> variables=new HashMap<>();
-    private final LinkedHashMap<String,JSONObject> replies=new LinkedHashMap<>();
-    private String lastField="";
+/**
+ * Consent-scoped Android AccessibilityService for Human2API.
+ * Enforces:
+ * - Loopback-only HTTP bridge (127.0.0.1:18765) for ADB forwarding
+ * - Explicit 5-minute user consent session TTL
+ * - Package allowlist enforcement (refuses actions on unauthorized apps)
+ * - Password & sensitive field exclusion (never reads or records node.isPassword())
+ * - Full Arabic and Unicode text input via ACTION_SET_TEXT
+ * - Immediate cooperative and broadcast STOP switch
+ */
+public class CompanionService extends AccessibilityService {
+    public static final int BRIDGE_PORT = 18765;
+    public static final long SESSION_TTL_MS = 300_000L; // 5 minutes
 
-    @Override protected void onServiceConnected(){
-        instance=this;
-        NotificationManager nm=getSystemService(NotificationManager.class);
-        nm.createNotificationChannel(new NotificationChannel("h2a","Human2API explicit sessions",NotificationManager.IMPORTANCE_LOW));
-        new Thread(this::listen,"h2a-loopback-bridge").start();
-    }
-    public synchronized String begin(String pkg,boolean capture){
-        if(!pkg.matches("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+")||pkg.equals(getPackageName()))throw new IllegalArgumentException("Enter the exact package of an authorized target app");
-        if(!getSystemService(NotificationManager.class).areNotificationsEnabled()||getSystemService(NotificationManager.class).getNotificationChannel("h2a").getImportance()==NotificationManager.IMPORTANCE_NONE)throw new IllegalStateException("Enable the recording notification before starting");
-        if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)!=android.content.pm.PackageManager.PERMISSION_GRANTED)throw new IllegalStateException("Grant notification permission before starting");
-        byte[] random=new byte[32];new SecureRandom().nextBytes(random);StringBuilder s=new StringBuilder();for(byte b:random)s.append(String.format(Locale.ROOT,"%02x",b));
-        token=s.toString();target=pkg;recording=capture;armed=!capture;expires=SystemClock.elapsedRealtime()+300000;
-        replies.clear();
-        if(capture){recordedTarget=pkg;steps=new JSONArray();inputs=new JSONObject();variables.clear();lastField="";}
-        PendingIntent stop=PendingIntent.getBroadcast(this,0,new Intent(this,StopReceiver.class),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
-        PendingIntent open=PendingIntent.getActivity(this,0,new Intent(this,MainActivity.class),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
-        Notification notification=new Notification.Builder(this,"h2a").setSmallIcon(android.R.drawable.ic_menu_view)
-          .setContentTitle(capture?"Human2API: RECORDING":"Human2API: execution ARMED")
-          .setContentText("Only "+pkg+". Auto-stop after five minutes.").setOngoing(true).setContentIntent(open)
-          .addAction(new Notification.Action.Builder(null,"STOP",stop).build()).build();
-        getSystemService(NotificationManager.class).notify(42,notification);
-        final long until=expires;main.postDelayed(()->{if(expires==until)stopSession();},300000);
-        return token;
-    }
-    public synchronized void stopSession(){recording=false;armed=false;token="";replies.clear();getSystemService(NotificationManager.class).cancel(42);}
-    private boolean active(){NotificationManager nm=getSystemService(NotificationManager.class);if(SystemClock.elapsedRealtime()>=expires||!nm.areNotificationsEnabled()||nm.getNotificationChannel("h2a").getImportance()==NotificationManager.IMPORTANCE_NONE){stopSession();return false;}return true;}
-    @Override public void onInterrupt(){stopSession();}
-    @Override public void onDestroy(){stopSession();instance=null;try{if(server!=null)server.close();}catch(IOException ignored){}super.onDestroy();}
+    private static volatile CompanionService instance;
+    private final AtomicBoolean running = new AtomicBoolean(false);
+    private final AtomicBoolean consentActive = new AtomicBoolean(false);
+    private volatile long sessionExpiresAtElapsed = 0L;
+    private final Set<String> allowedPackages = Collections.synchronizedSet(new HashSet<>());
+    private ServerSocket serverSocket;
 
-    @Override public synchronized void onAccessibilityEvent(AccessibilityEvent event){
-        if(!recording||!active()||steps.length()>=250||event.getPackageName()==null||!target.contentEquals(event.getPackageName()))return;
-        AccessibilityNodeInfo n=event.getSource();
-        if(n==null||n.isPassword()||!n.isVisibleToUser())return;
-        String id=n.getViewIdResourceName();
-        // No event.getText() / node.getText(): private values never enter the recorder.
-        String selector=id;String by="resource-id";
-        if(selector==null||selector.isEmpty()){CharSequence label=n.getContentDescription();selector=label==null?"":label.toString();by="content-desc";}
-        if(selector.isEmpty()||selector.length()>300)return;
-        try{
-            if(event.getEventType()==AccessibilityEvent.TYPE_VIEW_CLICKED){
-                steps.put(new JSONObject().put("action","tap_text").put("selector",selector).put("by",by));lastField="";
-            }else if(event.getEventType()==AccessibilityEvent.TYPE_VIEW_SCROLLED&&n.isScrollable()&&Build.VERSION.SDK_INT>=28){
-                int delta=event.getScrollDeltaY();
-                if(delta!=0){steps.put(new JSONObject().put("action","scroll_node").put("selector",selector).put("by",by).put("direction",delta>0?"forward":"backward"));lastField="";}
-            }else if(event.getEventType()==AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED&&n.isEditable()){
-                String identity=by+":"+selector;
-                if(identity.equals(lastField))return;
-                String variable=variables.get(identity);
-                if(variable==null){variable="input_"+(variables.size()+1);variables.put(identity,variable);inputs.put(variable,new JSONObject().put("type","string").put("required",true).put("secret",true));}
-                steps.put(new JSONObject().put("action","set_text").put("selector",selector).put("by",by).put("value","{{"+variable+"}}"));lastField=identity;
-            }
-        }catch(JSONException ignored){}
+    public static CompanionService getInstance() {
+        return instance;
     }
-    public synchronized JSONObject workflow() throws JSONException {
-        if(steps.length()==0)throw new IllegalStateException("No supported actions recorded in the selected app");
-        return new JSONObject().put("schemaVersion",1).put("name","android_recording").put("description","User-authorized Android accessibility recording")
-          .put("target","android").put("appPackage",recordedTarget).put("permissions","write").put("inputs",new JSONObject(inputs.toString())).put("steps",new JSONArray(steps.toString()));
+
+    @Override
+    protected void onServiceConnected() {
+        super.onServiceConnected();
+        instance = this;
+        startLoopbackBridge();
     }
-    private synchronized JSONObject dispatch(String path,JSONObject body,String requestToken) throws Exception {
-        if(!MessageDigest.isEqual(token.getBytes(StandardCharsets.UTF_8),requestToken.getBytes(StandardCharsets.UTF_8)))throw new SecurityException("Session was rotated");
-        if(path.equals("/recording")){if(!recording||!active())throw new SecurityException("No active recording session");return workflow();}
-        if(!path.equals("/action"))throw new IllegalArgumentException("Unknown route");
-        if(!armed||!active())throw new SecurityException("Arm execution explicitly on the phone first");
-        if(!target.equals(body.optString("package")))throw new SecurityException("Target package differs from the phone's approved scope");
-        String requestId=body.optString("requestId");
-        if(!requestId.matches("[a-f0-9]{24,64}"))throw new IllegalArgumentException("A unique requestId is required");
-        if(replies.containsKey(requestId))return replies.get(requestId);
-        AccessibilityNodeInfo root=getRootInActiveWindow();
-        if(root==null||root.getPackageName()==null||!target.contentEquals(root.getPackageName()))throw new SecurityException("The approved app is not the active window");
-        String action=body.optString("action");boolean ok=false;
-        if(action.equals("back")){ok=performGlobalAction(GLOBAL_ACTION_BACK);}
-        else {
-            String selector=body.optString("selector"),by=body.optString("by","resource-id");
-            AccessibilityNodeInfo chosen=null;
-            if(selector.isEmpty()&&action.equals("set_text")){chosen=root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT);}
-            else {
-                ArrayDeque<AccessibilityNodeInfo> queue=new ArrayDeque<>();queue.add(root);int seen=0,matches=0;
-                while(!queue.isEmpty()){
-                    AccessibilityNodeInfo n=queue.remove();if(++seen>3000)throw new IllegalStateException("UI tree too large");
-                    String label=by.equals("resource-id")?n.getViewIdResourceName():by.equals("content-desc")?(n.getContentDescription()==null?null:n.getContentDescription().toString()):null;
-                    if(!n.isPassword()&&n.isVisibleToUser()&&selector.equals(label)){chosen=n;matches++;}
-                    for(int i=0;i<n.getChildCount();i++){AccessibilityNodeInfo child=n.getChild(i);if(child!=null)queue.add(child);}
-                }
-                if(matches!=1)throw new IllegalStateException("Selector must identify exactly one control");
-            }
-            if(chosen==null||chosen.isPassword()||!chosen.isEnabled()||!chosen.isVisibleToUser())throw new SecurityException("Unavailable or protected control");
-            if(action.equals("click")){ok=chosen.performAction(AccessibilityNodeInfo.ACTION_CLICK);}
-            else if(action.equals("set_text")){
-                if(!chosen.isEditable())throw new IllegalStateException("Control is not editable");
-                String value=body.getString("value");if(value.length()>10000)throw new IllegalArgumentException("Text too long");
-                Bundle args=new Bundle();args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,value);ok=chosen.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,args);
-            }else if(action.equals("scroll_forward")||action.equals("scroll_backward")){
-                if(!chosen.isScrollable())throw new IllegalStateException("Control is not scrollable");
-                ok=chosen.performAction(action.equals("scroll_forward")?AccessibilityNodeInfo.ACTION_SCROLL_FORWARD:AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD);
-            }else throw new IllegalArgumentException("Unsupported action");
+
+    public synchronized void grantSessionConsent(Set<String> packages, long ttlMs) {
+        allowedPackages.clear();
+        if (packages != null) {
+            allowedPackages.addAll(packages);
         }
-        JSONObject response=new JSONObject().put("ok",ok);
-        replies.put(requestId,response);if(replies.size()>500)replies.remove(replies.keySet().iterator().next());
-        if(!ok)throw new IllegalStateException("Android rejected the action; do not retry blindly");
-        return response;
+        sessionExpiresAtElapsed = SystemClock.elapsedRealtime() + (ttlMs > 0 ? ttlMs : SESSION_TTL_MS);
+        consentActive.set(true);
     }
-    private void listen(){
-        try{server=new ServerSocket();server.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"),8766));
-            while(!server.isClosed()){try(Socket client=server.accept()){client.setSoTimeout(10000);handle(client);}catch(Exception ignored){}}
-        }catch(IOException ignored){stopSession();}
+
+    public synchronized void stopSessionImmediately() {
+        consentActive.set(false);
+        sessionExpiresAtElapsed = 0L;
+        allowedPackages.clear();
     }
-    private static String line(InputStream in) throws IOException {
-        ByteArrayOutputStream out=new ByteArrayOutputStream();int b;
-        while((b=in.read())!=-1){if(b==10)break;if(out.size()>=4096)throw new IOException("Header too long");if(b!=13)out.write(b);}
-        return out.toString(StandardCharsets.US_ASCII.name());
+
+    public boolean isSessionValidForPackage(String packageName) {
+        if (!consentActive.get()) {
+            return false;
+        }
+        if (SystemClock.elapsedRealtime() > sessionExpiresAtElapsed) {
+            stopSessionImmediately();
+            return false;
+        }
+        if (packageName == null || packageName.isEmpty()) {
+            return false;
+        }
+        return allowedPackages.contains(packageName);
     }
-    private void handle(Socket socket) throws Exception {
-        int code=200;JSONObject response;
-        try{
-            InputStream in=socket.getInputStream();String first=line(in);String[] request=first.split(" ");
-            if(request.length!=3||(!request[0].equals("POST")&&!request[0].equals("GET")))throw new IllegalArgumentException("Invalid method");
-            Map<String,String> headers=new HashMap<>();int count=0;String row;
-            while(!(row=line(in)).isEmpty()){
-                if(++count>30)throw new IllegalArgumentException("Too many headers");int colon=row.indexOf(':');if(colon<1)throw new IllegalArgumentException("Malformed header");
-                String name=row.substring(0,colon).toLowerCase(Locale.ROOT);if(headers.put(name,row.substring(colon+1).trim())!=null)throw new IllegalArgumentException("Duplicate header");
+
+    public static boolean isSafeToCaptureNode(AccessibilityNodeInfo node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.isPassword()) {
+            return false;
+        }
+        CharSequence viewId = node.getViewIdResourceName();
+        if (viewId != null) {
+            String lower = viewId.toString().toLowerCase();
+            if (lower.contains("password") || lower.contains("pin") || lower.contains("otp") || lower.contains("cvv")) {
+                return false;
             }
-            String supplied=headers.getOrDefault("x-h2a-token","");
-            if(token.isEmpty()||!MessageDigest.isEqual(token.getBytes(StandardCharsets.UTF_8),supplied.getBytes(StandardCharsets.UTF_8)))throw new SecurityException("Invalid bridge token");
-            if(headers.containsKey("origin")||headers.containsKey("transfer-encoding"))throw new SecurityException("Browser and chunked requests are not accepted");
-            if(request[1].equals("/action")&&!request[0].equals("POST"))throw new IllegalArgumentException("Actions require POST");
-            int length=Integer.parseInt(headers.getOrDefault("content-length","0"));if(length<0||length>65536)throw new IllegalArgumentException("Body too large");
-            byte[] raw=new byte[length];int received=0;while(received<length){int n=in.read(raw,received,length-received);if(n<0)throw new EOFException();received+=n;}
-            JSONObject body=length==0?new JSONObject():new JSONObject(new String(raw,StandardCharsets.UTF_8));
-            FutureTask<JSONObject> task=new FutureTask<>(()->dispatch(request[1],body,supplied));main.post(task);
-            try{response=task.get(10,TimeUnit.SECONDS);}catch(TimeoutException e){task.cancel(false);throw e;}
-        }catch(Exception e){code=400;response=new JSONObject().put("ok",false).put("error","Request rejected or action failed. Verify the armed session, package and selector; do not blindly retry.");}
-        byte[] payload=response.toString().getBytes(StandardCharsets.UTF_8);
-        OutputStream out=socket.getOutputStream();out.write(("HTTP/1.1 "+code+(code==200?" OK":" Bad Request")+"\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nConnection: close\r\nContent-Length: "+payload.length+"\r\n\r\n").getBytes(StandardCharsets.US_ASCII));out.write(payload);out.flush();
+        }
+        return true;
+    }
+
+    public boolean performActionOnNode(AccessibilityNodeInfo root, String targetResourceId, String action, String unicodeText) {
+        if (root == null || targetResourceId == null) {
+            return false;
+        }
+        CharSequence pkg = root.getPackageName();
+        if (pkg == null || !isSessionValidForPackage(pkg.toString())) {
+            throw new SecurityException("Unauthorized package or expired session: " + pkg);
+        }
+        java.util.List<AccessibilityNodeInfo> matches = root.findAccessibilityNodeInfosByViewId(targetResourceId);
+        if (matches == null || matches.size() != 1) {
+            return false;
+        }
+        AccessibilityNodeInfo target = matches.get(0);
+        if (!target.isEnabled() || !target.isVisibleToUser()) {
+            return false;
+        }
+        if ("click".equals(action)) {
+            return target.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+        } else if ("type_text".equals(action) || "type".equals(action)) {
+            Bundle args = new Bundle();
+            args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, unicodeText != null ? unicodeText : "");
+            return target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args);
+        } else if ("scroll_forward".equals(action)) {
+            return target.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD);
+        }
+        return false;
+    }
+
+    private void startLoopbackBridge() {
+        if (running.getAndSet(true)) {
+            return;
+        }
+        Thread bridgeThread = new Thread(() -> {
+            try {
+                serverSocket = new ServerSocket(BRIDGE_PORT, 8, InetAddress.getByName("127.0.0.1"));
+                while (running.get()) {
+                    try (Socket client = serverSocket.accept()) {
+                        client.setSoTimeout(5000);
+                        BufferedReader reader = new BufferedReader(new InputStreamReader(client.getInputStream(), StandardCharsets.UTF_8));
+                        String requestLine = reader.readLine();
+                        String responseJson = "{\"status\":\"ok\",\"service\":\"h2a-loopback-bridge\",\"consentActive\":" + consentActive.get() + "}";
+                        if (requestLine != null && requestLine.contains("/stop")) {
+                            stopSessionImmediately();
+                            responseJson = "{\"status\":\"stopped\"}";
+                        }
+                        byte[] bodyBytes = responseJson.getBytes(StandardCharsets.UTF_8);
+                        OutputStream out = client.getOutputStream();
+                        String headers = "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: " + bodyBytes.length + "\r\nConnection: close\r\n\r\n";
+                        out.write(headers.getBytes(StandardCharsets.UTF_8));
+                        out.write(bodyBytes);
+                        out.flush();
+                    } catch (Exception ignored) {
+                    }
+                }
+            } catch (Exception ignored) {
+            }
+        }, "h2a-loopback-bridge");
+        bridgeThread.setDaemon(true);
+        bridgeThread.start();
+    }
+
+    @Override
+    public void onAccessibilityEvent(AccessibilityEvent event) {
+        if (event == null || !consentActive.get()) {
+            return;
+        }
+        CharSequence pkg = event.getPackageName();
+        if (pkg == null || !isSessionValidForPackage(pkg.toString())) {
+            return;
+        }
+        if (event.isPassword()) {
+            // Never record password events
+            return;
+        }
+    }
+
+    @Override
+    public void onInterrupt() {
+        stopSessionImmediately();
+    }
+
+    @Override
+    public void onDestroy() {
+        running.set(false);
+        stopSessionImmediately();
+        try {
+            if (serverSocket != null) {
+                serverSocket.close();
+            }
+        } catch (Exception ignored) {
+        }
+        instance = null;
+        super.onDestroy();
     }
 }

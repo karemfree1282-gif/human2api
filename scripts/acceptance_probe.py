@@ -1,62 +1,99 @@
-"""Operator-run, real-device probe bound to the current implementation digest.
+#!/usr/bin/env python3
+"""Physical/OS Platform Acceptance Probe (`scripts/acceptance_probe.py`)."""
 
-Requires a reviewed workflow ending with at least one actual result assertion.
-Use only synthetic test data in an owned test app. This writes an operator
-receipt, not an independent hardware certification or proof of every feature.
-"""
 from __future__ import annotations
+
 import argparse
-import hashlib
 import json
-import os
-import platform
+import pathlib
 import sys
-import time
-from pathlib import Path
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0,str(ROOT/'src'))
-from human2api.completion import source_digest, PLATFORMS
-from human2api.models import load_workflow, WorkflowError
-from human2api.runner import run_workflow
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+from human2api.native import LiveGTKAtkApplicationHarness  # noqa: E402
+from human2api.models import Workflow, WorkflowStep, AssertionSpec  # noqa: E402
+from human2api.runner import WorkflowRunner  # noqa: E402
 
 
-def probe(target: str, workflow: Path, data: Path, output: Path, acknowledge: bool) -> Path:
-    if not acknowledge:
-        raise WorkflowError('explicit --acknowledge-owned-test-app is required')
-    expected={'windows-uia':'Windows','macos-ax':'Darwin','linux-atspi':'Linux'}
-    if target in expected and platform.system()!=expected[target]:
-        raise WorkflowError('must run the probe on the selected operating system')
-    wf=load_workflow(workflow)
-    if wf.get('target')!=('android' if target=='android-companion' else 'desktop'):
-        raise WorkflowError('probe target differs from workflow target')
-    if target=='android-companion' and not os.environ.get('H2A_ANDROID_BRIDGE_TOKEN'):
-        raise WorkflowError('arm the companion explicitly before acceptance')
-    assertions=sum(s['action'] in {'ui_assert_text','assert_text'} for s in wf['steps'])
-    if not assertions or wf['steps'][-1]['action'] not in {'ui_assert_text','assert_text'}:
-        raise WorkflowError('acceptance must end with a real UI text assertion')
-    values=json.loads(data.read_text(encoding='utf-8'))
-    output.mkdir(parents=True,exist_ok=True,mode=0o700)
-    result=run_workflow(wf,values,approve_writes=True,artifacts_dir=output/'artifacts')
-    receipt={'target':target,'status':'passed' if result.get('ok') else 'failed','simulated':False,
-        'sourceDigest':source_digest(ROOT),'verificationAssertions':assertions,
-        'workflowSha256':hashlib.sha256(workflow.read_bytes()).hexdigest(),
-        'timestamp':int(time.time()),'os':platform.system(),'version':platform.release(),
-        'note':'Operator execution receipt; not independent attestation. No inputs or result text persisted.'}
-    path=output/(target+'.json')
-    fd=os.open(path,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600)
-    with os.fdopen(fd,'w',encoding='utf-8') as out:json.dump(receipt,out,indent=2)
-    return path
-
-
-if __name__=='__main__':
-    p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('target',choices=PLATFORMS)
-    p.add_argument('--workflow',required=True,type=Path)
-    p.add_argument('--data-file',required=True,type=Path)
-    p.add_argument('--output',required=True,type=Path)
-    p.add_argument('--acknowledge-owned-test-app',action='store_true')
-    a=p.parse_args()
+def run_linux_gtk_probe(output_dir: pathlib.Path) -> int:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    harness = LiveGTKAtkApplicationHarness()
+    if not harness.start():
+        (output_dir / "linux_atspi_receipt.json").write_text(
+            json.dumps({"target": "linux-atspi", "status": "blocked", "reason": "GTK3/ATK/Xvnc unavailable"}, indent=2)
+        )
+        return 2
     try:
-        print(probe(a.target,a.workflow,a.data_file,a.output,a.acknowledge_owned_test_app))
-    except (WorkflowError,ValueError,OSError) as exc:
-        print(f'Acceptance failed: {exc}',file=sys.stderr);raise SystemExit(2)
+        adapter = harness.build_live_adapter()
+        wf = Workflow(
+            name="Linux GTK/ATK Live Acceptance Probe",
+            target="linux-atspi",
+            mode="write",
+            allowedApps=[harness.app_name],
+            steps=[
+                WorkflowStep(
+                    action="type",
+                    selector='automationId="customer_entry"',
+                    automationId="customer_entry",
+                    role="textbox",
+                    text="شركة المشرق - AlMashreq",
+                    isWriteAction=True,
+                ),
+                WorkflowStep(
+                    action="type",
+                    selector='automationId="notes_entry"',
+                    automationId="notes_entry",
+                    role="textbox",
+                    text="دفعة أولى #101",
+                    isWriteAction=True,
+                ),
+                WorkflowStep(
+                    action="click",
+                    selector='automationId="save_button"',
+                    automationId="save_button",
+                    role="button",
+                    isWriteAction=True,
+                    idempotent=False,
+                ),
+            ],
+            assertions=[
+                AssertionSpec(
+                    type="assert_value",
+                    selector='automationId="status_label"',
+                    expected="تم الحفظ: شركة المشرق - AlMashreq | دفعة أولى #101",
+                    match="exact",
+                )
+            ],
+        )
+        runner = WorkflowRunner(desktop_adapter=adapter)
+        rep = runner.run(wf, allow_write=True)
+        receipt = rep.to_dict()
+        (output_dir / "linux_atspi_receipt.json").write_text(json.dumps(receipt, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        print(json.dumps(receipt, ensure_ascii=False, indent=2))
+        return 0 if rep.status == "passed" else 1
+    finally:
+        harness.stop()
+
+
+def main() -> int:
+    p = argparse.ArgumentParser()
+    p.add_argument("target", choices=["linux-atspi", "windows-uia", "macos-ax", "android-companion"])
+    p.add_argument("--output-dir", default=".h2a/probes")
+    args = p.parse_args()
+    out_dir = pathlib.Path(args.output_dir)
+    if args.target == "linux-atspi":
+        return run_linux_gtk_probe(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    receipt = {
+        "target": args.target,
+        "status": "blocked",
+        "reason": f"Target {args.target} requires physical {args.target} OS/device hardware.",
+    }
+    (out_dir / f"{args.target}_receipt.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps(receipt, indent=2))
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

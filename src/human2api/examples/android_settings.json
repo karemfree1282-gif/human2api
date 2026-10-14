@@ -1,13 +1,45 @@
 {
-  "schemaVersion": 1,
-  "name": "android_settings",
-  "description": "Illustrative Android UI test: locate Settings by visible text and take a screenshot",
-  "target": "android",
-  "permissions": "write",
-  "inputs": {},
+  "schemaVersion": "0.5",
+  "name": "Android Companion Scoped Settings Search",
+  "description": "Android AccessibilityService workflow scoped to com.android.settings with Unicode input.",
+  "version": "1.0.0",
+  "target": "android-companion",
+  "mode": "read",
+  "allowedPackages": ["com.android.settings"],
+  "inputs": {
+    "query": {
+      "type": "string",
+      "description": "Settings search term",
+      "required": true,
+      "sensitive": false,
+      "default": "البطارية Battery"
+    }
+  },
   "steps": [
-    {"action": "tap_text", "selector": "Settings", "by": "text"},
-    {"action": "wait_ms", "durationMs": 750},
-    {"action": "screenshot", "filename": "android-settings.png"}
+    {
+      "id": "step_1",
+      "action": "click",
+      "packageName": "com.android.settings",
+      "resourceId": "com.android.settings:id/search_action_bar",
+      "role": "button",
+      "name": "Search settings"
+    },
+    {
+      "id": "step_2",
+      "action": "type_text",
+      "packageName": "com.android.settings",
+      "resourceId": "android:id/search_src_text",
+      "role": "textbox",
+      "name": "Search query",
+      "text": "${input:query}"
+    }
+  ],
+  "assertions": [
+    {
+      "type": "assert_text",
+      "selector": "android:id/search_src_text",
+      "expected": "${input:query}",
+      "match": "contains"
+    }
   ]
 }
