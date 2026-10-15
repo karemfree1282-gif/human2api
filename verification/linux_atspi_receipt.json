@@ -1,0 +1,43 @@
+{
+  "workflow_name": "Linux GTK/ATK Live Acceptance Probe",
+  "target": "linux-atspi",
+  "status": "passed",
+  "duration_ms": 5.17,
+  "steps": [
+    {
+      "step_id": "step_1",
+      "action": "type",
+      "status": "passed",
+      "duration_ms": 1.93,
+      "selector_used": "automationId=\"customer_entry\"",
+      "healing_tier": 1,
+      "extracted_value": null,
+      "error": null
+    },
+    {
+      "step_id": "step_2",
+      "action": "type",
+      "status": "passed",
+      "duration_ms": 1.35,
+      "selector_used": "automationId=\"notes_entry\"",
+      "healing_tier": 1,
+      "extracted_value": null,
+      "error": null
+    },
+    {
+      "step_id": "step_3",
+      "action": "click",
+      "status": "passed",
+      "duration_ms": 1.52,
+      "selector_used": "automationId=\"save_button\"",
+      "healing_tier": 1,
+      "extracted_value": "حفظ المهمة - Save Task",
+      "error": null
+    }
+  ],
+  "assertions_passed": 1,
+  "assertions_failed": 0,
+  "healing_events": [],
+  "outputs": {},
+  "error": null
+}

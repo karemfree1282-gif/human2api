@@ -1,0 +1,239 @@
+test_browser_capture_privacy (test_browser.TestBrowserRealE2E.test_browser_capture_privacy)
+Previously deferred E2E test #2: Verify password and token inputs are never leaked in workflows, reports, or history. ... ok
+test_browser_multitab_nested_iframe_and_file_upload (test_browser.TestBrowserRealE2E.test_browser_multitab_nested_iframe_and_file_upload)
+Verify multi-tabs, nested iframe interaction, and safe file upload inside real Chromium. ... ok
+test_browser_rejects_cross_origin_navigation (test_browser.TestBrowserRealE2E.test_browser_rejects_cross_origin_navigation)
+Previously deferred E2E test #3: Verify strict networkPolicy blocks navigation and links to unauthorized external hosts. ... ok
+test_real_invoice_browser_run (test_browser.TestBrowserRealE2E.test_real_invoice_browser_run)
+Previously deferred E2E test #1: Full record -> save -> parameter override -> replay -> DOM assert in real Chromium. ... ok
+test_resilient_fallback_selectors (test_browser.TestBrowserRealE2E.test_resilient_fallback_selectors)
+Previously deferred E2E test #4: Verify browser runner heals broken primary selectors via fallback (Tier 2) and semantic match (Tier 3). ... ok
+test_selector_priority_testid_over_id_and_css (test_browser_dom.TestBrowserDOMSelectors.test_selector_priority_testid_over_id_and_css) ... ok
+test_loopback_normalization_for_managed_chromium (test_browser_extended.TestBrowserExtendedHelpers.test_loopback_normalization_for_managed_chromium) ... ok
+test_dependency_checks_return_structured_items (test_completion_and_protocol.TestCompletionChecks.test_dependency_checks_return_structured_items) ... ok
+test_action_contract_assert_text (test_comprehensive_matrix.TestComprehensiveMatrix.test_action_contract_assert_text) ... ok
+test_action_contract_assert_url (test_comprehensive_matrix.TestComprehensiveMatrix.test_action_contract_assert_url) ... ok
+test_action_contract_assert_value (test_comprehensive_matrix.TestComprehensiveMatrix.test_action_contract_assert_value) ... ok
+test_action_contract_assert_visible (test_comprehensive_matrix.TestComprehensiveMatrix.test_action_contract_assert_visible) ... ok
+test_action_contract_back (test_comprehensive_matrix.TestComprehensiveMatrix.test_action_contract_back) ... ok
+test_action_contract_click (test_comprehensive_matrix.TestComprehensiveMatrix.test_action_contract_click) ... ok
+test_action_contract_close_tab (test_comprehensive_matrix.TestComprehensiveMatrix.test_action_contract_close_tab) ... ok
+test_action_contract_double_click (test_comprehensive_matrix.TestComprehensiveMatrix.test_action_contract_double_click) ... ok
+test_action_contract_download_file (test_comprehensive_matrix.TestComprehensiveMatrix.test_action_contract_download_file) ... ok
+test_action_contract_extract_text (test_comprehensive_matrix.TestComprehensiveMatrix.test_action_contract_extract_text) ... ok
+test_action_contract_fill (test_comprehensive_matrix.TestComprehensiveMatrix.test_action_contract_fill) ... ok
+test_action_contract_focus_window (test_comprehensive_matrix.TestComprehensiveMatrix.test_action_contract_focus_window) ... ok
+test_action_contract_goto (test_comprehensive_matrix.TestComprehensiveMatrix.test_action_contract_goto) ... ok
+test_action_contract_home (test_comprehensive_matrix.TestComprehensiveMatrix.test_action_contract_home) ... ok
+test_action_contract_navigate (test_comprehensive_matrix.TestComprehensiveMatrix.test_action_contract_navigate) ... ok
+test_action_contract_open_tab (test_comprehensive_matrix.TestComprehensiveMatrix.test_action_contract_open_tab) ... ok
+test_action_contract_press_key (test_comprehensive_matrix.TestComprehensiveMatrix.test_action_contract_press_key) ... ok
+test_action_contract_resize_window (test_comprehensive_matrix.TestComprehensiveMatrix.test_action_contract_resize_window) ... ok
+test_action_contract_scroll (test_comprehensive_matrix.TestComprehensiveMatrix.test_action_contract_scroll) ... ok
+test_action_contract_select (test_comprehensive_matrix.TestComprehensiveMatrix.test_action_contract_select) ... ok
+test_action_contract_swipe (test_comprehensive_matrix.TestComprehensiveMatrix.test_action_contract_swipe) ... ok
+test_action_contract_switch_frame (test_comprehensive_matrix.TestComprehensiveMatrix.test_action_contract_switch_frame) ... ok
+test_action_contract_switch_tab (test_comprehensive_matrix.TestComprehensiveMatrix.test_action_contract_switch_tab) ... ok
+test_action_contract_type (test_comprehensive_matrix.TestComprehensiveMatrix.test_action_contract_type) ... ok
+test_action_contract_type_text (test_comprehensive_matrix.TestComprehensiveMatrix.test_action_contract_type_text) ... ok
+test_action_contract_upload_file (test_comprehensive_matrix.TestComprehensiveMatrix.test_action_contract_upload_file) ... ok
+test_action_contract_wait (test_comprehensive_matrix.TestComprehensiveMatrix.test_action_contract_wait) ... ok
+test_action_contract_wait_for_selector (test_comprehensive_matrix.TestComprehensiveMatrix.test_action_contract_wait_for_selector) ... ok
+test_assertion_case_01 (test_comprehensive_matrix.TestComprehensiveMatrix.test_assertion_case_01) ... ok
+test_assertion_case_02 (test_comprehensive_matrix.TestComprehensiveMatrix.test_assertion_case_02) ... ok
+test_assertion_case_03 (test_comprehensive_matrix.TestComprehensiveMatrix.test_assertion_case_03) ... ok
+test_assertion_case_04 (test_comprehensive_matrix.TestComprehensiveMatrix.test_assertion_case_04) ... ok
+test_assertion_case_05 (test_comprehensive_matrix.TestComprehensiveMatrix.test_assertion_case_05) ... ok
+test_assertion_case_06 (test_comprehensive_matrix.TestComprehensiveMatrix.test_assertion_case_06) ... ok
+test_assertion_case_07 (test_comprehensive_matrix.TestComprehensiveMatrix.test_assertion_case_07) ... ok
+test_assertion_case_08 (test_comprehensive_matrix.TestComprehensiveMatrix.test_assertion_case_08) ... ok
+test_assertion_case_09 (test_comprehensive_matrix.TestComprehensiveMatrix.test_assertion_case_09) ... ok
+test_assertion_case_10 (test_comprehensive_matrix.TestComprehensiveMatrix.test_assertion_case_10) ... ok
+test_assertion_case_11 (test_comprehensive_matrix.TestComprehensiveMatrix.test_assertion_case_11) ... ok
+test_assertion_case_12 (test_comprehensive_matrix.TestComprehensiveMatrix.test_assertion_case_12) ... ok
+test_assertion_case_13 (test_comprehensive_matrix.TestComprehensiveMatrix.test_assertion_case_13) ... ok
+test_assertion_case_14 (test_comprehensive_matrix.TestComprehensiveMatrix.test_assertion_case_14) ... ok
+test_assertion_case_15 (test_comprehensive_matrix.TestComprehensiveMatrix.test_assertion_case_15) ... ok
+test_assertion_case_16 (test_comprehensive_matrix.TestComprehensiveMatrix.test_assertion_case_16) ... ok
+test_assertion_case_17 (test_comprehensive_matrix.TestComprehensiveMatrix.test_assertion_case_17) ... ok
+test_assertion_case_18 (test_comprehensive_matrix.TestComprehensiveMatrix.test_assertion_case_18) ... ok
+test_assertion_case_19 (test_comprehensive_matrix.TestComprehensiveMatrix.test_assertion_case_19) ... ok
+test_assertion_case_20 (test_comprehensive_matrix.TestComprehensiveMatrix.test_assertion_case_20) ... ok
+test_healing_guard_cross_host_element_rejected (test_comprehensive_matrix.TestComprehensiveMatrix.test_healing_guard_cross_host_element_rejected) ... ok
+test_healing_guard_disabled_element_rejected (test_comprehensive_matrix.TestComprehensiveMatrix.test_healing_guard_disabled_element_rejected) ... ok
+test_healing_guard_double_click_on_listitem_accepted (test_comprehensive_matrix.TestComprehensiveMatrix.test_healing_guard_double_click_on_listitem_accepted) ... ok
+test_healing_guard_fill_on_entry_accepted (test_comprehensive_matrix.TestComprehensiveMatrix.test_healing_guard_fill_on_entry_accepted) ... ok
+test_healing_guard_invisible_element_rejected (test_comprehensive_matrix.TestComprehensiveMatrix.test_healing_guard_invisible_element_rejected) ... ok
+test_healing_guard_loopback_alias_127_0_0_1_accepted (test_comprehensive_matrix.TestComprehensiveMatrix.test_healing_guard_loopback_alias_127_0_0_1_accepted) ... ok
+test_healing_guard_loopback_alias_localhost_accepted (test_comprehensive_matrix.TestComprehensiveMatrix.test_healing_guard_loopback_alias_localhost_accepted) ... ok
+test_healing_guard_role_match_click_on_button (test_comprehensive_matrix.TestComprehensiveMatrix.test_healing_guard_role_match_click_on_button) ... ok
+test_healing_guard_role_match_type_on_textbox (test_comprehensive_matrix.TestComprehensiveMatrix.test_healing_guard_role_match_type_on_textbox) ... ok
+test_healing_guard_role_mismatch_click_on_textbox (test_comprehensive_matrix.TestComprehensiveMatrix.test_healing_guard_role_mismatch_click_on_textbox) ... ok
+test_healing_guard_role_mismatch_type_on_link (test_comprehensive_matrix.TestComprehensiveMatrix.test_healing_guard_role_mismatch_type_on_link) ... ok
+test_healing_guard_select_on_button_rejected (test_comprehensive_matrix.TestComprehensiveMatrix.test_healing_guard_select_on_button_rejected) ... ok
+test_healing_guard_select_on_combobox_accepted (test_comprehensive_matrix.TestComprehensiveMatrix.test_healing_guard_select_on_combobox_accepted) ... ok
+test_healing_guard_type_text_on_edit_accepted (test_comprehensive_matrix.TestComprehensiveMatrix.test_healing_guard_type_text_on_edit_accepted) ... ok
+test_healing_guard_type_text_wrong_pkg_rejected (test_comprehensive_matrix.TestComprehensiveMatrix.test_healing_guard_type_text_wrong_pkg_rejected) ... ok
+test_healing_guard_upload_on_file_accepted (test_comprehensive_matrix.TestComprehensiveMatrix.test_healing_guard_upload_on_file_accepted) ... ok
+test_schema_version_0_1 (test_comprehensive_matrix.TestComprehensiveMatrix.test_schema_version_0_1) ... ok
+test_schema_version_0_2 (test_comprehensive_matrix.TestComprehensiveMatrix.test_schema_version_0_2) ... ok
+test_schema_version_0_3 (test_comprehensive_matrix.TestComprehensiveMatrix.test_schema_version_0_3) ... ok
+test_schema_version_0_4 (test_comprehensive_matrix.TestComprehensiveMatrix.test_schema_version_0_4) ... ok
+test_schema_version_0_5 (test_comprehensive_matrix.TestComprehensiveMatrix.test_schema_version_0_5) ... ok
+test_schema_version_1_0 (test_comprehensive_matrix.TestComprehensiveMatrix.test_schema_version_1_0) ... ok
+test_security_and_resilience_regression_01 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_01) ... ok
+test_security_and_resilience_regression_02 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_02) ... ok
+test_security_and_resilience_regression_03 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_03) ... ok
+test_security_and_resilience_regression_04 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_04) ... ok
+test_security_and_resilience_regression_05 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_05) ... ok
+test_security_and_resilience_regression_06 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_06) ... ok
+test_security_and_resilience_regression_07 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_07) ... ok
+test_security_and_resilience_regression_08 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_08) ... ok
+test_security_and_resilience_regression_09 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_09) ... ok
+test_security_and_resilience_regression_10 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_10) ... ok
+test_security_and_resilience_regression_11 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_11) ... ok
+test_security_and_resilience_regression_12 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_12) ... ok
+test_security_and_resilience_regression_13 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_13) ... ok
+test_security_and_resilience_regression_14 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_14) ... ok
+test_security_and_resilience_regression_15 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_15) ... ok
+test_security_and_resilience_regression_16 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_16) ... ok
+test_security_and_resilience_regression_17 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_17) ... ok
+test_security_and_resilience_regression_18 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_18) ... ok
+test_security_and_resilience_regression_19 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_19) ... ok
+test_security_and_resilience_regression_20 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_20) ... ok
+test_security_and_resilience_regression_21 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_21) ... ok
+test_security_and_resilience_regression_22 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_22) ... ok
+test_security_and_resilience_regression_23 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_23) ... ok
+test_security_and_resilience_regression_24 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_24) ... ok
+test_security_and_resilience_regression_25 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_25) ... ok
+test_security_and_resilience_regression_26 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_26) ... ok
+test_security_and_resilience_regression_27 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_27) ... ok
+test_security_and_resilience_regression_28 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_28) ... ok
+test_security_and_resilience_regression_29 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_29) ... ok
+test_security_and_resilience_regression_30 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_30) ... ok
+test_security_and_resilience_regression_31 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_31) ... ok
+test_security_and_resilience_regression_32 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_32) ... ok
+test_security_and_resilience_regression_33 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_33) ... ok
+test_security_and_resilience_regression_34 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_34) ... ok
+test_security_and_resilience_regression_35 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_35) ... ok
+test_security_and_resilience_regression_36 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_36) ... ok
+test_security_and_resilience_regression_37 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_37) ... ok
+test_security_and_resilience_regression_38 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_38) ... ok
+test_security_and_resilience_regression_39 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_39) ... ok
+test_security_and_resilience_regression_40 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_40) ... ok
+test_security_and_resilience_regression_41 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_41) ... ok
+test_security_and_resilience_regression_42 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_42) ... ok
+test_security_and_resilience_regression_43 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_43) ... ok
+test_security_and_resilience_regression_44 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_44) ... ok
+test_security_and_resilience_regression_45 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_45) ... ok
+test_security_and_resilience_regression_46 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_46) ... ok
+test_security_and_resilience_regression_47 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_47) ... ok
+test_security_and_resilience_regression_48 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_48) ... ok
+test_security_and_resilience_regression_49 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_49) ... ok
+test_security_and_resilience_regression_50 (test_comprehensive_matrix.TestComprehensiveMatrix.test_security_and_resilience_regression_50) ... ok
+test_selector_strategy_aria_label (test_comprehensive_matrix.TestComprehensiveMatrix.test_selector_strategy_aria_label) ... ok
+test_selector_strategy_atspi_path (test_comprehensive_matrix.TestComprehensiveMatrix.test_selector_strategy_atspi_path) ... ok
+test_selector_strategy_automation_id (test_comprehensive_matrix.TestComprehensiveMatrix.test_selector_strategy_automation_id) ... ok
+test_selector_strategy_ax_identifier (test_comprehensive_matrix.TestComprehensiveMatrix.test_selector_strategy_ax_identifier) ... ok
+test_selector_strategy_content_desc (test_comprehensive_matrix.TestComprehensiveMatrix.test_selector_strategy_content_desc) ... ok
+test_selector_strategy_css (test_comprehensive_matrix.TestComprehensiveMatrix.test_selector_strategy_css) ... ok
+test_selector_strategy_id (test_comprehensive_matrix.TestComprehensiveMatrix.test_selector_strategy_id) ... ok
+test_selector_strategy_name (test_comprehensive_matrix.TestComprehensiveMatrix.test_selector_strategy_name) ... ok
+test_selector_strategy_placeholder (test_comprehensive_matrix.TestComprehensiveMatrix.test_selector_strategy_placeholder) ... ok
+test_selector_strategy_resource_id (test_comprehensive_matrix.TestComprehensiveMatrix.test_selector_strategy_resource_id) ... ok
+test_selector_strategy_role (test_comprehensive_matrix.TestComprehensiveMatrix.test_selector_strategy_role) ... ok
+test_selector_strategy_testid (test_comprehensive_matrix.TestComprehensiveMatrix.test_selector_strategy_testid) ... ok
+test_selector_strategy_text (test_comprehensive_matrix.TestComprehensiveMatrix.test_selector_strategy_text) ... ok
+test_selector_strategy_xpath (test_comprehensive_matrix.TestComprehensiveMatrix.test_selector_strategy_xpath) ... ok
+test_sensitive_redaction_access_token (test_comprehensive_matrix.TestComprehensiveMatrix.test_sensitive_redaction_access_token) ... ok
+test_sensitive_redaction_api_key (test_comprehensive_matrix.TestComprehensiveMatrix.test_sensitive_redaction_api_key) ... ok
+test_sensitive_redaction_apikey (test_comprehensive_matrix.TestComprehensiveMatrix.test_sensitive_redaction_apikey) ... ok
+test_sensitive_redaction_authorization (test_comprehensive_matrix.TestComprehensiveMatrix.test_sensitive_redaction_authorization) ... ok
+test_sensitive_redaction_credit_card (test_comprehensive_matrix.TestComprehensiveMatrix.test_sensitive_redaction_credit_card) ... ok
+test_sensitive_redaction_cvv (test_comprehensive_matrix.TestComprehensiveMatrix.test_sensitive_redaction_cvv) ... ok
+test_sensitive_redaction_otp (test_comprehensive_matrix.TestComprehensiveMatrix.test_sensitive_redaction_otp) ... ok
+test_sensitive_redaction_pass (test_comprehensive_matrix.TestComprehensiveMatrix.test_sensitive_redaction_pass) ... ok
+test_sensitive_redaction_passwd (test_comprehensive_matrix.TestComprehensiveMatrix.test_sensitive_redaction_passwd) ... ok
+test_sensitive_redaction_password (test_comprehensive_matrix.TestComprehensiveMatrix.test_sensitive_redaction_password) ... ok
+test_sensitive_redaction_pin (test_comprehensive_matrix.TestComprehensiveMatrix.test_sensitive_redaction_pin) ... ok
+test_sensitive_redaction_private_key (test_comprehensive_matrix.TestComprehensiveMatrix.test_sensitive_redaction_private_key) ... ok
+test_sensitive_redaction_refresh_token (test_comprehensive_matrix.TestComprehensiveMatrix.test_sensitive_redaction_refresh_token) ... ok
+test_sensitive_redaction_secret (test_comprehensive_matrix.TestComprehensiveMatrix.test_sensitive_redaction_secret) ... ok
+test_sensitive_redaction_token (test_comprehensive_matrix.TestComprehensiveMatrix.test_sensitive_redaction_token) ... ok
+test_target_contract_android (test_comprehensive_matrix.TestComprehensiveMatrix.test_target_contract_android) ... ok
+test_target_contract_android_companion (test_comprehensive_matrix.TestComprehensiveMatrix.test_target_contract_android_companion) ... ok
+test_target_contract_browser (test_comprehensive_matrix.TestComprehensiveMatrix.test_target_contract_browser) ... ok
+test_target_contract_desktop (test_comprehensive_matrix.TestComprehensiveMatrix.test_target_contract_desktop) ... ok
+test_target_contract_linux_atspi (test_comprehensive_matrix.TestComprehensiveMatrix.test_target_contract_linux_atspi) ... ok
+test_target_contract_macos_ax (test_comprehensive_matrix.TestComprehensiveMatrix.test_target_contract_macos_ax) ... ok
+test_target_contract_web (test_comprehensive_matrix.TestComprehensiveMatrix.test_target_contract_web) ... ok
+test_target_contract_windows_uia (test_comprehensive_matrix.TestComprehensiveMatrix.test_target_contract_windows_uia) ... ok
+test_url_policy_case_01 (test_comprehensive_matrix.TestComprehensiveMatrix.test_url_policy_case_01) ... ok
+test_url_policy_case_02 (test_comprehensive_matrix.TestComprehensiveMatrix.test_url_policy_case_02) ... ok
+test_url_policy_case_03 (test_comprehensive_matrix.TestComprehensiveMatrix.test_url_policy_case_03) ... ok
+test_url_policy_case_04 (test_comprehensive_matrix.TestComprehensiveMatrix.test_url_policy_case_04) ... ok
+test_url_policy_case_05 (test_comprehensive_matrix.TestComprehensiveMatrix.test_url_policy_case_05) ... ok
+test_url_policy_case_06 (test_comprehensive_matrix.TestComprehensiveMatrix.test_url_policy_case_06) ... ok
+test_url_policy_case_07 (test_comprehensive_matrix.TestComprehensiveMatrix.test_url_policy_case_07) ... ok
+test_url_policy_case_08 (test_comprehensive_matrix.TestComprehensiveMatrix.test_url_policy_case_08) ... ok
+test_url_policy_case_09 (test_comprehensive_matrix.TestComprehensiveMatrix.test_url_policy_case_09) ... ok
+test_url_policy_case_10 (test_comprehensive_matrix.TestComprehensiveMatrix.test_url_policy_case_10) ... ok
+test_url_policy_case_11 (test_comprehensive_matrix.TestComprehensiveMatrix.test_url_policy_case_11) ... ok
+test_url_policy_case_12 (test_comprehensive_matrix.TestComprehensiveMatrix.test_url_policy_case_12) ... ok
+test_url_policy_case_13 (test_comprehensive_matrix.TestComprehensiveMatrix.test_url_policy_case_13) ... ok
+test_url_policy_case_14 (test_comprehensive_matrix.TestComprehensiveMatrix.test_url_policy_case_14) ... ok
+test_url_policy_case_15 (test_comprehensive_matrix.TestComprehensiveMatrix.test_url_policy_case_15) ... ok
+test_url_policy_case_16 (test_comprehensive_matrix.TestComprehensiveMatrix.test_url_policy_case_16) ... ok
+test_url_policy_case_17 (test_comprehensive_matrix.TestComprehensiveMatrix.test_url_policy_case_17) ... ok
+test_url_policy_case_18 (test_comprehensive_matrix.TestComprehensiveMatrix.test_url_policy_case_18) ... ok
+test_url_policy_case_19 (test_comprehensive_matrix.TestComprehensiveMatrix.test_url_policy_case_19) ... ok
+test_url_policy_case_20 (test_comprehensive_matrix.TestComprehensiveMatrix.test_url_policy_case_20) ... ok
+test_android_companion_consent_package_scope_unicode_and_stop (test_desktop_and_android.TestDesktopAndAndroidEngines.test_android_companion_consent_package_scope_unicode_and_stop) ... ok
+test_live_linux_gtk3_atk_x11_workflow (test_desktop_and_android.TestDesktopAndAndroidEngines.test_live_linux_gtk3_atk_x11_workflow)
+Real OS-level test on Linux using GTK 3.0 + ATK Accessibility + Xvnc X11 display (NOT a mock!). ... <frozen importlib._bootstrap>:673: ImportWarning: DynamicImporter.exec_module() not found; falling back to load_module()
+<frozen importlib._bootstrap>:673: ImportWarning: DynamicImporter.exec_module() not found; falling back to load_module()
+<frozen importlib._bootstrap>:673: ImportWarning: DynamicImporter.exec_module() not found; falling back to load_module()
+ok
+test_macos_ax_permission_check_and_unauthorized_app_block (test_desktop_and_android.TestDesktopAndAndroidEngines.test_macos_ax_permission_check_and_unauthorized_app_block) ... ok
+test_windows_uia_arabic_unicode_resize_and_multiwindow (test_desktop_and_android.TestDesktopAndAndroidEngines.test_windows_uia_arabic_unicode_resize_and_multiwindow)
+Verify Windows UIA adapter handles AutomationId, Arabic/English text, multi-window focus, and window resizing. ... ok
+test_all_markdown_and_schema_json_blocks_are_valid (test_docs_json_examples.TestDocsJsonExamples.test_all_markdown_and_schema_json_blocks_are_valid) ... ok
+test_ed25519_version_bound_signature_tamper_detection (test_execution_access_signatures.TestExecutionAccessSignatures.test_ed25519_version_bound_signature_tamper_detection) ... ok
+test_healing_tiers_1_to_4_and_safety_guards (test_healing_and_security.TestSelfHealingAndSecurityRegressions.test_healing_tiers_1_to_4_and_safety_guards) ... ok
+test_http_security_headers_csrf_dns_rebinding_and_auth (test_healing_and_security.TestSelfHealingAndSecurityRegressions.test_http_security_headers_csrf_dns_rebinding_and_auth) ... ok
+test_vault_aes256_gcm_scrypt_and_timeout (test_healing_and_security.TestSelfHealingAndSecurityRegressions.test_vault_aes256_gcm_scrypt_and_timeout) ... ok
+test_zip_slip_and_path_traversal_regressions (test_healing_and_security.TestSelfHealingAndSecurityRegressions.test_zip_slip_and_path_traversal_regressions) ... ok
+test_history_redacts_secrets_and_bounds_entries (test_history.TestHistoryJournal.test_history_redacts_secrets_and_bounds_entries) ... ok
+test_mcp_over_http_ping_and_tools_list (test_http_mcp.TestHttpMcpEndpoint.test_mcp_over_http_ping_and_tools_list) ... ok
+test_record_compile_endpoint_creates_workflow (test_http_multitarget.TestHttpMultiTargetCompile.test_record_compile_endpoint_creates_workflow) ... ok
+test_full_marketplace_lifecycle_and_untrusted_rejection (test_marketplace_and_https.TestMarketplaceAndHTTPS.test_full_marketplace_lifecycle_and_untrusted_rejection) ... ok
+test_https_tls_marketplace_server_and_remote_client (test_marketplace_and_https.TestMarketplaceAndHTTPS.test_https_tls_marketplace_server_and_remote_client) ... ok
+test_workflow_requires_write_detection (test_models.TestModelsUnit.test_workflow_requires_write_detection) ... ok
+test_all_supported_targets_and_actions_validation (test_models_mcp_and_complete.TestModelsMCPAndProtocol.test_all_supported_targets_and_actions_validation) ... ok
+test_legacy_workflow_migration_01_to_05 (test_models_mcp_and_complete.TestModelsMCPAndProtocol.test_legacy_workflow_migration_01_to_05) ... ok
+test_mcp_protocol_initialize_list_and_write_approval_gate (test_models_mcp_and_complete.TestModelsMCPAndProtocol.test_mcp_protocol_initialize_list_and_write_approval_gate) ... ok
+test_soak_and_cli_commands (test_models_mcp_and_complete.TestModelsMCPAndProtocol.test_soak_and_cli_commands) ... ok
+test_visual_editor_operations_scheduler_history_and_batch (test_models_mcp_and_complete.TestModelsMCPAndProtocol.test_visual_editor_operations_scheduler_history_and_batch) ... ok
+test_device_lease_exclusivity (test_new_capabilities.TestNewCapabilitiesLimits.test_device_lease_exclusivity) ... ok
+test_rate_limiter_enforces_window_cap (test_release_acceptance.TestReleaseAcceptanceLimits.test_rate_limiter_enforces_window_cap) ... ok
+test_android_companion_sources_and_manifest_exist (test_release_quality.TestReleaseQualityMetadata.test_android_companion_sources_and_manifest_exist) ... ok
+test_catalog_index_json_valid (test_remote_catalog.TestRemoteCatalogFormat.test_catalog_index_json_valid) ... ok
+test_workflow_schema_has_required_defs (test_schema_and_release_030.TestSchemaAndReleaseCompatibility.test_workflow_schema_has_required_defs) ... ok
+test_studio_dashboard_editor_and_controls_in_real_chromium (test_studio_browser.TestStudioVisualUIInChromium.test_studio_dashboard_editor_and_controls_in_real_chromium) ... ok
+test_all_bundled_examples_load_cleanly (test_targets_and_packages.TestTargetsAndPackagesExamples.test_all_bundled_examples_load_cleanly) ... ok
+test_vault_crud_and_delete (test_vault.TestVaultStandalone.test_vault_crud_and_delete) ... ok
+test_save_and_load_roundtrip (test_workflow.TestWorkflowPersistence.test_save_and_load_roundtrip) ... ok
+
+----------------------------------------------------------------------
+Ran 215 tests in 74.310s
+
+OK
+{
+  "status": "initialized",
+  "workspace": {
+    "root_dir": "/tmp/tmp2ily6_vb",
+    "state_dir": "/tmp/tmp2ily6_vb/.h2a",
+    "workflows_dir": "/tmp/tmp2ily6_vb/workflows"
+  }
+}
+{"status": "recorded", "output": "/tmp/tmp2ily6_vb/rec.json"}

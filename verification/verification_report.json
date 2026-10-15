@@ -1,0 +1,263 @@
+{
+  "version": "0.5.0",
+  "timestamp": "2026-10-15T15:37:35Z",
+  "host_platform": "Linux-4.19.0-gvisor-x86_64",
+  "summary": {
+    "checks_passed": 11,
+    "checks_failed": 0,
+    "checks_blocked": 1,
+    "local_verification_passed": true,
+    "full_cross_platform_release_ready": false
+  },
+  "test_summary": {
+    "total": 215,
+    "passed": 215,
+    "failed": 0,
+    "skipped_or_blocked": 0,
+    "skipped_reasons": [],
+    "failures": []
+  },
+  "checks": [
+    {
+      "name": "python_core_and_browser_deps",
+      "category": "dependencies",
+      "status": "passed",
+      "duration_ms": 3.0936530000076345,
+      "details": "Python 3.11.2, cryptography & selenium available.",
+      "requirement": "",
+      "artifacts": []
+    },
+    {
+      "name": "chromium_browser_binary",
+      "category": "dependencies",
+      "status": "passed",
+      "duration_ms": 0.5910090000043056,
+      "details": "Found Chromium at /usr/bin/chromium (127.0.0.2 loopback E2E enabled).",
+      "requirement": "",
+      "artifacts": []
+    },
+    {
+      "name": "linux_native_elf_and_deb_toolchain",
+      "category": "toolchains",
+      "status": "passed",
+      "duration_ms": 1.265110999980834,
+      "details": "Found gcc (/usr/bin/gcc), dpkg-deb (/usr/bin/dpkg-deb), and Xvnc (/usr/bin/Xvnc) on Linux.",
+      "requirement": "",
+      "artifacts": []
+    },
+    {
+      "name": "windows_pe64_and_macos_bundle_builder",
+      "category": "toolchains",
+      "status": "passed",
+      "duration_ms": 111.72734999999534,
+      "details": "Found official PEP 427 Windows PE64 stubs (t64.exe, w64.exe) and macOS .app bundle archiver (unsigned bundles).",
+      "requirement": "",
+      "artifacts": []
+    },
+    {
+      "name": "android_sdk_gradle_toolchain",
+      "category": "toolchains",
+      "status": "blocked",
+      "duration_ms": 1.0219870000014453,
+      "details": "Android source & manifest verified; APK binary compilation blocked in current Linux container (gradle=False, adb=False, ANDROID_HOME=False).",
+      "requirement": "Android SDK (ANDROID_HOME), Gradle 8+, and an attached ADB device/emulator.",
+      "artifacts": []
+    },
+    {
+      "name": "python_and_javascript_syntax_validation",
+      "category": "code_quality",
+      "status": "passed",
+      "duration_ms": 896.0742379999829,
+      "details": "Compiled 69 Python files and validated 2 JavaScript files via node --check.",
+      "requirement": "",
+      "artifacts": []
+    },
+    {
+      "name": "docs_and_schema_json_validation",
+      "category": "documentation",
+      "status": "passed",
+      "duration_ms": 6.171425000019326,
+      "details": "Validated 9 JSON schemas, workflow examples, and documentation JSON blocks.",
+      "requirement": "",
+      "artifacts": []
+    },
+    {
+      "name": "automated_test_suite",
+      "category": "tests",
+      "status": "passed",
+      "duration_ms": 76481.003338,
+      "details": "Executed 215 tests across 23 test modules: 215 passed, 0 failed, 0 blocked/skipped.",
+      "requirement": "",
+      "artifacts": []
+    },
+    {
+      "name": "python_wheel_and_sdist_build",
+      "category": "packaging",
+      "status": "passed",
+      "duration_ms": 2134.2847000000233,
+      "details": "Built human2api-0.5.0-py3-none-any.whl (SHA-256: c9c9bfbab3215ed5612581684ae791334d9042cbef531ddaec43bc7d32924a0d).",
+      "requirement": "",
+      "artifacts": [
+        {
+          "name": "human2api-0.5.0-py3-none-any.whl",
+          "path": "/tmp/upstream_human2api/human2api-80c4c86720a215dbd9c40110d8aa50cea4fd7d67/dist/human2api-0.5.0-py3-none-any.whl",
+          "platform": "python-wheel",
+          "size_bytes": 100548,
+          "sha256": "c9c9bfbab3215ed5612581684ae791334d9042cbef531ddaec43bc7d32924a0d",
+          "signed": false
+        },
+        {
+          "name": "human2api-0.5.0.tar.gz",
+          "path": "/tmp/upstream_human2api/human2api-80c4c86720a215dbd9c40110d8aa50cea4fd7d67/dist/human2api-0.5.0.tar.gz",
+          "platform": "python-sdist",
+          "size_bytes": 108264,
+          "sha256": "f1a8b27c5c45f868c880d68c7e34ed7d2944caa8cf403796ae70a19801632fe3",
+          "signed": false
+        }
+      ]
+    },
+    {
+      "name": "isolated_wheel_smoke_test",
+      "category": "packaging",
+      "status": "passed",
+      "duration_ms": 772.6251279999587,
+      "details": "Extracted wheel in isolated directory outside source tree and verified `python -m human2api doctor --json`.",
+      "requirement": "",
+      "artifacts": []
+    },
+    {
+      "name": "linux_native_elf_deb_and_pyz_build",
+      "category": "packaging",
+      "status": "passed",
+      "duration_ms": 2462.469129999988,
+      "details": "Built and verified 3 Linux distributions (h2a-0.5.0-linux-standalone.pyz, h2a-0.5.0-linux-x86_64, human2api_0.5.0_all.deb).",
+      "requirement": "",
+      "artifacts": [
+        {
+          "name": "h2a-0.5.0-linux-standalone.pyz",
+          "path": "/tmp/upstream_human2api/human2api-80c4c86720a215dbd9c40110d8aa50cea4fd7d67/dist/h2a-0.5.0-linux-standalone.pyz",
+          "platform": "linux-pyz",
+          "size_bytes": 291379,
+          "sha256": "8f45cdd1ca7146d37d6a993390d6fd58aa7b2031286a561a3b11fb5d9eecfbb8",
+          "signed": false
+        },
+        {
+          "name": "h2a-0.5.0-linux-x86_64",
+          "path": "/tmp/upstream_human2api/human2api-80c4c86720a215dbd9c40110d8aa50cea4fd7d67/dist/h2a-0.5.0-linux-x86_64",
+          "platform": "linux-elf-x86_64",
+          "size_bytes": 305368,
+          "sha256": "070e7291a599fc59e14f799c4c844a3ba299aa74e1729fd40f5bfa7c698f9b39",
+          "signed": false
+        },
+        {
+          "name": "human2api_0.5.0_all.deb",
+          "path": "/tmp/upstream_human2api/human2api-80c4c86720a215dbd9c40110d8aa50cea4fd7d67/dist/human2api_0.5.0_all.deb",
+          "platform": "linux-deb",
+          "size_bytes": 287320,
+          "sha256": "387f7d4df8da004d29f57c69f2d93b1bcb5b4511d0538ea5243c5a5320e1c0c0",
+          "signed": false
+        }
+      ]
+    },
+    {
+      "name": "windows_pe64_exe_and_macos_app_bundles",
+      "category": "packaging",
+      "status": "passed",
+      "duration_ms": 94.26808599999958,
+      "details": "Built unsigned PE32+ x86_64 Windows launchers (h2a-0.5.0-windows-x64.exe, h2a-studio-0.5.0-windows-x64.exe) and macOS .app bundle (Human2API-0.5.0-macos.app.tar.gz).",
+      "requirement": "",
+      "artifacts": [
+        {
+          "name": "h2a-0.5.0-windows-x64.exe",
+          "path": "/tmp/upstream_human2api/human2api-80c4c86720a215dbd9c40110d8aa50cea4fd7d67/dist/h2a-0.5.0-windows-x64.exe",
+          "platform": "windows-x64-exe",
+          "size_bytes": 202204,
+          "sha256": "e1334bd87f90882a7e6be34d617e9da9c7e5bb0f5cf89b053340d1794d5af747",
+          "signed": false
+        },
+        {
+          "name": "h2a-studio-0.5.0-windows-x64.exe",
+          "path": "/tmp/upstream_human2api/human2api-80c4c86720a215dbd9c40110d8aa50cea4fd7d67/dist/h2a-studio-0.5.0-windows-x64.exe",
+          "platform": "windows-x64-gui-exe",
+          "size_bytes": 196060,
+          "sha256": "a0bd797b9c00501fc356e629ba2850c0c02a1d59b864d2af32496e0bcfa4773f",
+          "signed": false
+        },
+        {
+          "name": "Human2API-0.5.0-macos.app.tar.gz",
+          "path": "/tmp/upstream_human2api/human2api-80c4c86720a215dbd9c40110d8aa50cea4fd7d67/dist/Human2API-0.5.0-macos.app.tar.gz",
+          "platform": "macos-app-bundle",
+          "size_bytes": 286556,
+          "sha256": "f1dd2090e523ee661c8fbb06f2ef6cfd7f9a5580197e59cd757a1458285650c1",
+          "signed": false
+        }
+      ]
+    }
+  ],
+  "built_artifacts": [
+    {
+      "name": "human2api-0.5.0-py3-none-any.whl",
+      "path": "/tmp/upstream_human2api/human2api-80c4c86720a215dbd9c40110d8aa50cea4fd7d67/dist/human2api-0.5.0-py3-none-any.whl",
+      "platform": "python-wheel",
+      "size_bytes": 100548,
+      "sha256": "c9c9bfbab3215ed5612581684ae791334d9042cbef531ddaec43bc7d32924a0d",
+      "signed": false
+    },
+    {
+      "name": "human2api-0.5.0.tar.gz",
+      "path": "/tmp/upstream_human2api/human2api-80c4c86720a215dbd9c40110d8aa50cea4fd7d67/dist/human2api-0.5.0.tar.gz",
+      "platform": "python-sdist",
+      "size_bytes": 108264,
+      "sha256": "f1a8b27c5c45f868c880d68c7e34ed7d2944caa8cf403796ae70a19801632fe3",
+      "signed": false
+    },
+    {
+      "name": "h2a-0.5.0-linux-standalone.pyz",
+      "path": "/tmp/upstream_human2api/human2api-80c4c86720a215dbd9c40110d8aa50cea4fd7d67/dist/h2a-0.5.0-linux-standalone.pyz",
+      "platform": "linux-pyz",
+      "size_bytes": 291379,
+      "sha256": "8f45cdd1ca7146d37d6a993390d6fd58aa7b2031286a561a3b11fb5d9eecfbb8",
+      "signed": false
+    },
+    {
+      "name": "h2a-0.5.0-linux-x86_64",
+      "path": "/tmp/upstream_human2api/human2api-80c4c86720a215dbd9c40110d8aa50cea4fd7d67/dist/h2a-0.5.0-linux-x86_64",
+      "platform": "linux-elf-x86_64",
+      "size_bytes": 305368,
+      "sha256": "070e7291a599fc59e14f799c4c844a3ba299aa74e1729fd40f5bfa7c698f9b39",
+      "signed": false
+    },
+    {
+      "name": "human2api_0.5.0_all.deb",
+      "path": "/tmp/upstream_human2api/human2api-80c4c86720a215dbd9c40110d8aa50cea4fd7d67/dist/human2api_0.5.0_all.deb",
+      "platform": "linux-deb",
+      "size_bytes": 287320,
+      "sha256": "387f7d4df8da004d29f57c69f2d93b1bcb5b4511d0538ea5243c5a5320e1c0c0",
+      "signed": false
+    },
+    {
+      "name": "h2a-0.5.0-windows-x64.exe",
+      "path": "/tmp/upstream_human2api/human2api-80c4c86720a215dbd9c40110d8aa50cea4fd7d67/dist/h2a-0.5.0-windows-x64.exe",
+      "platform": "windows-x64-exe",
+      "size_bytes": 202204,
+      "sha256": "e1334bd87f90882a7e6be34d617e9da9c7e5bb0f5cf89b053340d1794d5af747",
+      "signed": false
+    },
+    {
+      "name": "h2a-studio-0.5.0-windows-x64.exe",
+      "path": "/tmp/upstream_human2api/human2api-80c4c86720a215dbd9c40110d8aa50cea4fd7d67/dist/h2a-studio-0.5.0-windows-x64.exe",
+      "platform": "windows-x64-gui-exe",
+      "size_bytes": 196060,
+      "sha256": "a0bd797b9c00501fc356e629ba2850c0c02a1d59b864d2af32496e0bcfa4773f",
+      "signed": false
+    },
+    {
+      "name": "Human2API-0.5.0-macos.app.tar.gz",
+      "path": "/tmp/upstream_human2api/human2api-80c4c86720a215dbd9c40110d8aa50cea4fd7d67/dist/Human2API-0.5.0-macos.app.tar.gz",
+      "platform": "macos-app-bundle",
+      "size_bytes": 286556,
+      "sha256": "f1dd2090e523ee661c8fbb06f2ef6cfd7f9a5580197e59cd757a1458285650c1",
+      "signed": false
+    }
+  ]
+}

@@ -1,0 +1,374 @@
+=== PYTHON WHEEL & SDIST BUILD ===
+running bdist_wheel
+running build
+running build_py
+creating build/lib/human2api
+copying src/human2api/__init__.py -> build/lib/human2api
+copying src/human2api/__main__.py -> build/lib/human2api
+copying src/human2api/android.py -> build/lib/human2api
+copying src/human2api/batch.py -> build/lib/human2api
+copying src/human2api/cli.py -> build/lib/human2api
+copying src/human2api/companion.py -> build/lib/human2api
+copying src/human2api/completion.py -> build/lib/human2api
+copying src/human2api/contracts.py -> build/lib/human2api
+copying src/human2api/desktop.py -> build/lib/human2api
+copying src/human2api/desktop_access.py -> build/lib/human2api
+copying src/human2api/editor.py -> build/lib/human2api
+copying src/human2api/execution.py -> build/lib/human2api
+copying src/human2api/healing.py -> build/lib/human2api
+copying src/human2api/history.py -> build/lib/human2api
+copying src/human2api/http_server.py -> build/lib/human2api
+copying src/human2api/leases.py -> build/lib/human2api
+copying src/human2api/marketplace.py -> build/lib/human2api
+copying src/human2api/mcp_server.py -> build/lib/human2api
+copying src/human2api/models.py -> build/lib/human2api
+copying src/human2api/native.py -> build/lib/human2api
+copying src/human2api/recorder.py -> build/lib/human2api
+copying src/human2api/registry.py -> build/lib/human2api
+copying src/human2api/registry_backup.py -> build/lib/human2api
+copying src/human2api/registry_client.py -> build/lib/human2api
+copying src/human2api/runner.py -> build/lib/human2api
+copying src/human2api/scheduler.py -> build/lib/human2api
+copying src/human2api/server_limits.py -> build/lib/human2api
+copying src/human2api/studio.py -> build/lib/human2api
+copying src/human2api/trust.py -> build/lib/human2api
+copying src/human2api/vault.py -> build/lib/human2api
+copying src/human2api/workspace.py -> build/lib/human2api
+running egg_info
+creating src/human2api.egg-info
+writing src/human2api.egg-info/PKG-INFO
+writing dependency_links to src/human2api.egg-info/dependency_links.txt
+writing entry points to src/human2api.egg-info/entry_points.txt
+writing requirements to src/human2api.egg-info/requires.txt
+writing top-level names to src/human2api.egg-info/top_level.txt
+writing manifest file 'src/human2api.egg-info/SOURCES.txt'
+reading manifest file 'src/human2api.egg-info/SOURCES.txt'
+adding license file 'LICENSE'
+writing manifest file 'src/human2api.egg-info/SOURCES.txt'
+creating build/lib/human2api/static
+copying src/human2api/static/app.js -> build/lib/human2api/static
+copying src/human2api/static/index.html -> build/lib/human2api/static
+copying src/human2api/static/styles.css -> build/lib/human2api/static
+creating build/lib/human2api/examples
+copying src/human2api/examples/android_settings.json -> build/lib/human2api/examples
+copying src/human2api/examples/github_star.json -> build/lib/human2api/examples
+copying src/human2api/examples/synthetic_login.json -> build/lib/human2api/examples
+copying src/human2api/examples/windows_notepad.json -> build/lib/human2api/examples
+installing to build/bdist.linux-x86_64/wheel
+running install
+running install_lib
+creating build/bdist.linux-x86_64/wheel
+creating build/bdist.linux-x86_64/wheel/human2api
+copying build/lib/human2api/__init__.py -> build/bdist.linux-x86_64/wheel/./human2api
+copying build/lib/human2api/__main__.py -> build/bdist.linux-x86_64/wheel/./human2api
+copying build/lib/human2api/android.py -> build/bdist.linux-x86_64/wheel/./human2api
+copying build/lib/human2api/batch.py -> build/bdist.linux-x86_64/wheel/./human2api
+copying build/lib/human2api/cli.py -> build/bdist.linux-x86_64/wheel/./human2api
+copying build/lib/human2api/companion.py -> build/bdist.linux-x86_64/wheel/./human2api
+copying build/lib/human2api/completion.py -> build/bdist.linux-x86_64/wheel/./human2api
+copying build/lib/human2api/contracts.py -> build/bdist.linux-x86_64/wheel/./human2api
+copying build/lib/human2api/desktop.py -> build/bdist.linux-x86_64/wheel/./human2api
+copying build/lib/human2api/desktop_access.py -> build/bdist.linux-x86_64/wheel/./human2api
+copying build/lib/human2api/editor.py -> build/bdist.linux-x86_64/wheel/./human2api
+copying build/lib/human2api/execution.py -> build/bdist.linux-x86_64/wheel/./human2api
+copying build/lib/human2api/healing.py -> build/bdist.linux-x86_64/wheel/./human2api
+copying build/lib/human2api/history.py -> build/bdist.linux-x86_64/wheel/./human2api
+copying build/lib/human2api/http_server.py -> build/bdist.linux-x86_64/wheel/./human2api
+copying build/lib/human2api/leases.py -> build/bdist.linux-x86_64/wheel/./human2api
+copying build/lib/human2api/marketplace.py -> build/bdist.linux-x86_64/wheel/./human2api
+copying build/lib/human2api/mcp_server.py -> build/bdist.linux-x86_64/wheel/./human2api
+copying build/lib/human2api/models.py -> build/bdist.linux-x86_64/wheel/./human2api
+copying build/lib/human2api/native.py -> build/bdist.linux-x86_64/wheel/./human2api
+copying build/lib/human2api/recorder.py -> build/bdist.linux-x86_64/wheel/./human2api
+copying build/lib/human2api/registry.py -> build/bdist.linux-x86_64/wheel/./human2api
+copying build/lib/human2api/registry_backup.py -> build/bdist.linux-x86_64/wheel/./human2api
+copying build/lib/human2api/registry_client.py -> build/bdist.linux-x86_64/wheel/./human2api
+copying build/lib/human2api/runner.py -> build/bdist.linux-x86_64/wheel/./human2api
+copying build/lib/human2api/scheduler.py -> build/bdist.linux-x86_64/wheel/./human2api
+copying build/lib/human2api/server_limits.py -> build/bdist.linux-x86_64/wheel/./human2api
+copying build/lib/human2api/studio.py -> build/bdist.linux-x86_64/wheel/./human2api
+copying build/lib/human2api/trust.py -> build/bdist.linux-x86_64/wheel/./human2api
+copying build/lib/human2api/vault.py -> build/bdist.linux-x86_64/wheel/./human2api
+copying build/lib/human2api/workspace.py -> build/bdist.linux-x86_64/wheel/./human2api
+creating build/bdist.linux-x86_64/wheel/human2api/static
+copying build/lib/human2api/static/app.js -> build/bdist.linux-x86_64/wheel/./human2api/static
+copying build/lib/human2api/static/index.html -> build/bdist.linux-x86_64/wheel/./human2api/static
+copying build/lib/human2api/static/styles.css -> build/bdist.linux-x86_64/wheel/./human2api/static
+creating build/bdist.linux-x86_64/wheel/human2api/examples
+copying build/lib/human2api/examples/android_settings.json -> build/bdist.linux-x86_64/wheel/./human2api/examples
+copying build/lib/human2api/examples/github_star.json -> build/bdist.linux-x86_64/wheel/./human2api/examples
+copying build/lib/human2api/examples/synthetic_login.json -> build/bdist.linux-x86_64/wheel/./human2api/examples
+copying build/lib/human2api/examples/windows_notepad.json -> build/bdist.linux-x86_64/wheel/./human2api/examples
+running install_egg_info
+Copying src/human2api.egg-info to build/bdist.linux-x86_64/wheel/./human2api-0.5.0-py3.11.egg-info
+running install_scripts
+creating build/bdist.linux-x86_64/wheel/human2api-0.5.0.dist-info/WHEEL
+creating '/tmp/upstream_human2api/human2api-80c4c86720a215dbd9c40110d8aa50cea4fd7d67/dist/human2api-0.5.0-py3-none-any.whl' and adding 'build/bdist.linux-x86_64/wheel' to it
+adding 'human2api/__init__.py'
+adding 'human2api/__main__.py'
+adding 'human2api/android.py'
+adding 'human2api/batch.py'
+adding 'human2api/cli.py'
+adding 'human2api/companion.py'
+adding 'human2api/completion.py'
+adding 'human2api/contracts.py'
+adding 'human2api/desktop.py'
+adding 'human2api/desktop_access.py'
+adding 'human2api/editor.py'
+adding 'human2api/execution.py'
+adding 'human2api/healing.py'
+adding 'human2api/history.py'
+adding 'human2api/http_server.py'
+adding 'human2api/leases.py'
+adding 'human2api/marketplace.py'
+adding 'human2api/mcp_server.py'
+adding 'human2api/models.py'
+adding 'human2api/native.py'
+adding 'human2api/recorder.py'
+adding 'human2api/registry.py'
+adding 'human2api/registry_backup.py'
+adding 'human2api/registry_client.py'
+adding 'human2api/runner.py'
+adding 'human2api/scheduler.py'
+adding 'human2api/server_limits.py'
+adding 'human2api/studio.py'
+adding 'human2api/trust.py'
+adding 'human2api/vault.py'
+adding 'human2api/workspace.py'
+adding 'human2api/examples/android_settings.json'
+adding 'human2api/examples/github_star.json'
+adding 'human2api/examples/synthetic_login.json'
+adding 'human2api/examples/windows_notepad.json'
+adding 'human2api/static/app.js'
+adding 'human2api/static/index.html'
+adding 'human2api/static/styles.css'
+adding 'human2api-0.5.0.dist-info/licenses/LICENSE'
+adding 'human2api-0.5.0.dist-info/METADATA'
+adding 'human2api-0.5.0.dist-info/WHEEL'
+adding 'human2api-0.5.0.dist-info/entry_points.txt'
+adding 'human2api-0.5.0.dist-info/top_level.txt'
+adding 'human2api-0.5.0.dist-info/RECORD'
+removing build/bdist.linux-x86_64/wheel
+running sdist
+running check
+creating human2api-0.5.0
+creating human2api-0.5.0/src/human2api
+creating human2api-0.5.0/src/human2api.egg-info
+creating human2api-0.5.0/src/human2api/examples
+creating human2api-0.5.0/src/human2api/static
+creating human2api-0.5.0/tests
+copying files to human2api-0.5.0...
+copying LICENSE -> human2api-0.5.0
+copying README.md -> human2api-0.5.0
+copying pyproject.toml -> human2api-0.5.0
+copying setup.py -> human2api-0.5.0
+copying src/human2api/__init__.py -> human2api-0.5.0/src/human2api
+copying src/human2api/__main__.py -> human2api-0.5.0/src/human2api
+copying src/human2api/android.py -> human2api-0.5.0/src/human2api
+copying src/human2api/batch.py -> human2api-0.5.0/src/human2api
+copying src/human2api/cli.py -> human2api-0.5.0/src/human2api
+copying src/human2api/companion.py -> human2api-0.5.0/src/human2api
+copying src/human2api/completion.py -> human2api-0.5.0/src/human2api
+copying src/human2api/contracts.py -> human2api-0.5.0/src/human2api
+copying src/human2api/desktop.py -> human2api-0.5.0/src/human2api
+copying src/human2api/desktop_access.py -> human2api-0.5.0/src/human2api
+copying src/human2api/editor.py -> human2api-0.5.0/src/human2api
+copying src/human2api/execution.py -> human2api-0.5.0/src/human2api
+copying src/human2api/healing.py -> human2api-0.5.0/src/human2api
+copying src/human2api/history.py -> human2api-0.5.0/src/human2api
+copying src/human2api/http_server.py -> human2api-0.5.0/src/human2api
+copying src/human2api/leases.py -> human2api-0.5.0/src/human2api
+copying src/human2api/marketplace.py -> human2api-0.5.0/src/human2api
+copying src/human2api/mcp_server.py -> human2api-0.5.0/src/human2api
+copying src/human2api/models.py -> human2api-0.5.0/src/human2api
+copying src/human2api/native.py -> human2api-0.5.0/src/human2api
+copying src/human2api/recorder.py -> human2api-0.5.0/src/human2api
+copying src/human2api/registry.py -> human2api-0.5.0/src/human2api
+copying src/human2api/registry_backup.py -> human2api-0.5.0/src/human2api
+copying src/human2api/registry_client.py -> human2api-0.5.0/src/human2api
+copying src/human2api/runner.py -> human2api-0.5.0/src/human2api
+copying src/human2api/scheduler.py -> human2api-0.5.0/src/human2api
+copying src/human2api/server_limits.py -> human2api-0.5.0/src/human2api
+copying src/human2api/studio.py -> human2api-0.5.0/src/human2api
+copying src/human2api/trust.py -> human2api-0.5.0/src/human2api
+copying src/human2api/vault.py -> human2api-0.5.0/src/human2api
+copying src/human2api/workspace.py -> human2api-0.5.0/src/human2api
+copying src/human2api.egg-info/PKG-INFO -> human2api-0.5.0/src/human2api.egg-info
+copying src/human2api.egg-info/SOURCES.txt -> human2api-0.5.0/src/human2api.egg-info
+copying src/human2api.egg-info/dependency_links.txt -> human2api-0.5.0/src/human2api.egg-info
+copying src/human2api.egg-info/entry_points.txt -> human2api-0.5.0/src/human2api.egg-info
+copying src/human2api.egg-info/requires.txt -> human2api-0.5.0/src/human2api.egg-info
+copying src/human2api.egg-info/top_level.txt -> human2api-0.5.0/src/human2api.egg-info
+copying src/human2api/examples/android_settings.json -> human2api-0.5.0/src/human2api/examples
+copying src/human2api/examples/github_star.json -> human2api-0.5.0/src/human2api/examples
+copying src/human2api/examples/synthetic_login.json -> human2api-0.5.0/src/human2api/examples
+copying src/human2api/examples/windows_notepad.json -> human2api-0.5.0/src/human2api/examples
+copying src/human2api/static/app.js -> human2api-0.5.0/src/human2api/static
+copying src/human2api/static/index.html -> human2api-0.5.0/src/human2api/static
+copying src/human2api/static/styles.css -> human2api-0.5.0/src/human2api/static
+copying tests/test_browser.py -> human2api-0.5.0/tests
+copying tests/test_browser_dom.py -> human2api-0.5.0/tests
+copying tests/test_browser_extended.py -> human2api-0.5.0/tests
+copying tests/test_completion_and_protocol.py -> human2api-0.5.0/tests
+copying tests/test_comprehensive_matrix.py -> human2api-0.5.0/tests
+copying tests/test_desktop_and_android.py -> human2api-0.5.0/tests
+copying tests/test_docs_json_examples.py -> human2api-0.5.0/tests
+copying tests/test_execution_access_signatures.py -> human2api-0.5.0/tests
+copying tests/test_healing_and_security.py -> human2api-0.5.0/tests
+copying tests/test_history.py -> human2api-0.5.0/tests
+copying tests/test_http_mcp.py -> human2api-0.5.0/tests
+copying tests/test_http_multitarget.py -> human2api-0.5.0/tests
+copying tests/test_marketplace_and_https.py -> human2api-0.5.0/tests
+copying tests/test_models.py -> human2api-0.5.0/tests
+copying tests/test_models_mcp_and_complete.py -> human2api-0.5.0/tests
+copying tests/test_new_capabilities.py -> human2api-0.5.0/tests
+copying tests/test_release_acceptance.py -> human2api-0.5.0/tests
+copying tests/test_release_quality.py -> human2api-0.5.0/tests
+copying tests/test_remote_catalog.py -> human2api-0.5.0/tests
+copying tests/test_schema_and_release_030.py -> human2api-0.5.0/tests
+copying tests/test_studio_browser.py -> human2api-0.5.0/tests
+copying tests/test_targets_and_packages.py -> human2api-0.5.0/tests
+copying tests/test_vault.py -> human2api-0.5.0/tests
+copying tests/test_workflow.py -> human2api-0.5.0/tests
+copying src/human2api.egg-info/SOURCES.txt -> human2api-0.5.0/src/human2api.egg-info
+Writing human2api-0.5.0/setup.cfg
+Creating tar archive
+removing 'human2api-0.5.0' (and everything under it)
+
+Could not find an up-to-date installation of `packaging`. License expressions might not be validated. To enforce validation, please install `packaging>=24.2`.
+/opt/spark/local/lib/python3.11/dist-packages/setuptools/config/_apply_pyprojecttoml.py:82: SetuptoolsDeprecationWarning: `project.license` as a TOML table is deprecated
+!!
+
+        ********************************************************************************
+        Please use a simple string containing a SPDX expression for `project.license`. You can also use `project.license-files`. (Both options available on setuptools>=77.0.0).
+
+        This deprecation is overdue, please update your project and remove deprecated
+        calls to avoid build errors in the future.
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  corresp(dist, value, root_dir)
+/opt/spark/local/lib/python3.11/dist-packages/setuptools/config/_apply_pyprojecttoml.py:82: SetuptoolsWarning: `install_requires` overwritten in `pyproject.toml` (dependencies)
+  corresp(dist, value, root_dir)
+/opt/spark/local/lib/python3.11/dist-packages/setuptools/config/_apply_pyprojecttoml.py:61: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  dist._finalize_license_expression()
+/opt/spark/local/lib/python3.11/dist-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+/opt/spark/local/lib/python3.11/dist-packages/setuptools/_distutils/cmd.py:90: SetuptoolsDeprecationWarning: setup.py install is deprecated.
+!!
+
+        ********************************************************************************
+        Please avoid running ``setup.py`` directly.
+        Instead, use pypa/build, pypa/installer or other
+        standards-based tools.
+
+        This deprecation is overdue, please update your project and remove deprecated
+        calls to avoid build errors in the future.
+
+        See https://blog.ganssle.io/articles/2021/10/setup-py-deprecated.html for details.
+        ********************************************************************************
+
+!!
+  self.initialize_options()
+
+
+=== ISOLATED WHEEL SMOKE TEST ===
+{
+  "version": "0.5.0",
+  "platform": "Linux-4.19.0-gvisor-x86_64-with-glibc2.36",
+  "linux_display": {
+    "platform": "linux-atspi",
+    "is_wayland": false,
+    "is_x11": true,
+    "display": ":99",
+    "wayland_global_coordinate_restriction": false,
+    "gtk_atk_available": true,
+    "xdotool_available": true,
+    "xvnc_available": true
+  },
+  "checks": [
+    {
+      "name": "python_core_and_browser_deps",
+      "category": "dependencies",
+      "status": "passed",
+      "duration_ms": 0.765583000031711,
+      "details": "Python 3.11.2, cryptography & selenium available.",
+      "requirement": "",
+      "artifacts": []
+    },
+    {
+      "name": "chromium_browser_binary",
+      "category": "dependencies",
+      "status": "passed",
+      "duration_ms": 0.3923609999674227,
+      "details": "Found Chromium at /usr/bin/chromium (127.0.0.2 loopback E2E enabled).",
+      "requirement": "",
+      "artifacts": []
+    },
+    {
+      "name": "linux_native_elf_and_deb_toolchain",
+      "category": "toolchains",
+      "status": "passed",
+      "duration_ms": 0.6389490000060505,
+      "details": "Found gcc (/usr/bin/gcc), dpkg-deb (/usr/bin/dpkg-deb), and Xvnc (/usr/bin/Xvnc) on Linux.",
+      "requirement": "",
+      "artifacts": []
+    },
+    {
+      "name": "windows_pe64_and_macos_bundle_builder",
+      "category": "toolchains",
+      "status": "blocked",
+      "duration_ms": 77.60160700001961,
+      "details": "Windows PE64 stub builder unavailable: t64.exe / w64.exe stubs missing",
+      "requirement": "Python distlib PE64 launcher stubs.",
+      "artifacts": []
+    },
+    {
+      "name": "android_sdk_gradle_toolchain",
+      "category": "toolchains",
+      "status": "blocked",
+      "duration_ms": 0.7760199999893302,
+      "details": "Android source & manifest verified; APK binary compilation blocked in current Linux container (gradle=False, adb=False, ANDROID_HOME=False).",
+      "requirement": "Android SDK (ANDROID_HOME), Gradle 8+, and an attached ADB device/emulator.",
+      "artifacts": []
+    }
+  ]
+}
+
+
+
+=== LINUX NATIVE ELF BUILD ===
+Compiled native ELF x86_64 binary and verified `h2a-0.5.0-linux-x86_64 --version` -> human2api 0.5.0
+
+=== LINUX DEBIAN (.deb) BUILD ===
+dpkg-deb: building package 'human2api' in '/tmp/h2a_deb_q9qqzww8/human2api_0.5.0_all.deb'.
+
+
+
+=== WINDOWS PE64 & MACOS APP BUNDLE BUILD ===
+Valid PE32+ (x86_64) executable with verified embedded zipapp payload
+Built Human2API-0.5.0-macos.app.tar.gz

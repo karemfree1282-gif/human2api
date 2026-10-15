@@ -1,0 +1,8 @@
+Package: human2api
+Version: 0.5.0
+Section: utils
+Priority: optional
+Architecture: all
+Depends: python3 (>= 3.10), python3-cryptography
+Maintainer: Human2API Contributors <engineering@human2api.dev>
+Description: Teach browser, desktop, and Android tasks once and run via REST, CLI, and MCP.
