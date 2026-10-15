@@ -44,3 +44,24 @@ h2a start
   }
 }
 ```
+
+## تشغيل Windows الحقيقي والتحكم في Android
+
+**Windows:** شغّل `start-human2api.bat` أول مرة لتثبيت المتطلبات، وبعدها شغّل `start-windows-demo.bat`. في نافذة أوامر ثانية نفّذ:
+
+```bat
+.venv\Scripts\h2a.exe run --workflow src\human2api\examples\windows_demo.json --allow-write
+```
+
+لو اشتغل على Windows فعليًا، نافذة الاختبار المفروض تعرض `Saved: مرحبا Windows`؛ ده اختبار لعناصر Windows UI Automation الحقيقية من خلال pywinauto، وليس محاكاة داخل Python.
+
+**Android (هاتف مرتبط بكمبيوتر Windows بكابل USB):** ثبت Android Studio مع SDK Platform 34 وBuild Tools 34.0.0. شغّل `build-android.bat` لبناء APK حقيقي. بعدها ثبت الناتج عبر `adb install -r android-companion/app/build/outputs/apk/debug/app-debug.apk`. افتح التطبيق على الهاتف، وفعّل خدمة إمكانية الوصول Accessibility يدويًا، واكتب في خانة الحزمة المسموحة `dev.human2api.companion` وابدأ جلسة 5 دقائق، وسيظهر كود اقتران مؤقت.
+
+من الكمبيوتر شغّل:
+
+```bat
+.venv\Scripts\h2a.exe android doctor
+.venv\Scripts\h2a.exe android run --workflow src\human2api\examples\android_companion_demo.json --allow-write
+```
+
+هيطلب كود الاقتران من الهاتف، وبعد نجاح التنفيذ المفروض النص الظاهر في شاشة الهاتف يبقى `Saved: مرحبا Android`. الهاتف هنا **تطبيق مرافق** والـAPI الأساسية بتشتغل على الكمبيوتر. لا يحتاج روت؛ يحتاج موافقتك وإعداد USB debugging. الحقول الحساسة مستبعدة، وزر STOP يوقف الجلسة فورًا. بناء APK يتطلب Android SDK، وتجربة هاتف حقيقي لا يمكن إثباتها من بيئة Linux بدون هاتف متصل.

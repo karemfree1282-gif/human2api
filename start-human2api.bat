@@ -22,7 +22,7 @@ if not exist ".venv\Scripts\python.exe" (
 )
 set "APP_PY=.venv\Scripts\python.exe"
 echo Installing or updating Human2API dependencies...
-"%APP_PY%" -m pip install -e ".[browser]"
+"%APP_PY%" -m pip install -e ".[browser,accessibility]"
 if errorlevel 1 goto :failed
 echo Checking the Chromium browser runtime...
 "%APP_PY%" -m playwright install chromium

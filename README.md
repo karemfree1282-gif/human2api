@@ -84,3 +84,33 @@ If automation fails, run `h2a doctor --json`; its diagnostics distinguish missin
 ```bash
 python3 scripts/complete.py --repair
 ```
+
+## Native Windows UI Automation and Android Companion — use real devices
+
+### Windows end-to-end demo
+
+1. Run `start-human2api.bat` once (requires Python 3.10+ and an internet connection). This installs `pywinauto` on Windows alongside the browser engine.
+2. Double-click `start-windows-demo.bat` to open the **Human2API Windows Demo** application (Windows Forms).
+3. In a second console inside the project directory, run:
+   ```bat
+   .venv\Scripts\h2a.exe run --workflow src\human2api\examples\windows_demo.json --allow-write
+   ```
+4. The demo must show **Saved: مرحبا Windows**. The automation uses native Windows UI Automation. It does not pretend to control Notepad or any unsupported desktop window.
+
+Windows native automation requires a logged-in, interactive Windows desktop session; it cannot control Windows apps from Linux or run reliably in a headless Windows service session. Only applications matching `allowedApps` are eligible.
+
+### Android USB companion end-to-end demo
+
+1. Install **Android Studio**, Android SDK Platform **34** and Build Tools 34.0.0. On Windows, double-click `build-android.bat`, or run `python scripts/build_android.py`. It downloads checksum-verified Gradle 8.7 if Gradle is unavailable. The real debug APK appears at `android-companion/app/build/outputs/apk/debug/app-debug.apk` **only after a successful Android build**.
+2. Enable Developer Options and USB Debugging on your Android device, connect via USB, and run `adb install -r android-companion/app/build/outputs/apk/debug/app-debug.apk`.
+3. In the Companion app, grant Android Accessibility Service manually. For the built-in **self-test**, enter `dev.human2api.companion` as the allowed package, tap **Start 5-minute session**, and keep the demo controls visible. A private one-time pairing code is shown on the phone.
+4. On the Windows PC, run:
+   ```bat
+   .venv\Scripts\h2a.exe android doctor
+   .venv\Scripts\h2a.exe android run --workflow src\human2api\examples\android_companion_demo.json --allow-write
+   ```
+   When prompted, paste the one-time pairing code from the phone. The app should display **Saved: مرحبا Android**.
+
+**Architecture:** The Windows host runs the Human2API Python server/runner; the Android phone runs the consent-scoped native companion app and receives commands via an ADB USB loopback tunnel. This is **not** a standalone Android Python server. All read/action commands require a time-limited pairing token and match the phone's explicit package allowlist. No root is required.
+
+**Verification caveat:** This source release has unit-tested ADB/HTTP protocol and Windows UIA dispatch paths, but a real Android APK/device test and interactive Windows UIA test must be completed on the corresponding platforms. Missing SDK/ADB or unavailable desktop privileges are reported as blockers; fake successes and fake APKs are not generated.

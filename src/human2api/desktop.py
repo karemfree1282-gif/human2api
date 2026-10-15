@@ -10,6 +10,7 @@ from human2api.desktop_access import (
     DesktopAccessibleNode,
     check_macos_ax_permission,
     detect_linux_display_protocol,
+    sys_platform_name,
 )
 from human2api.execution import (
     AssertionFailureError,
@@ -84,6 +85,10 @@ class BaseDesktopAdapter:
                 return True
         return False
 
+    def candidate_scopes(self, allowed_apps: List[str]) -> List[str]:
+        """Return allowed scopes for self-healing; native adapters already filter windows."""
+        return allowed_apps
+
     def verify_element_before_action(self, node: DesktopAccessibleNode, step: WorkflowStep, allowed_apps: List[str]) -> None:
         """Verify element state, window focus, bounds integrity, and allowed application scope before mutating action."""
         if not node.visible or not node.enabled:
@@ -94,6 +99,10 @@ class BaseDesktopAdapter:
             raise PermissionError(
                 f"Application {node.app_name or node.window_title!r} is not in allowedApps={allowed_apps}."
             )
+
+    def activate_window(self, title: str) -> None:
+        """Switch the active window. Native adapters override to focus the real OS window."""
+        self.active_window = title
 
     def resize_window(self, window_title: str, width: int, height: int) -> None:
         """Simulate or apply window resize and recalculate relative element bounds cleanly."""
@@ -163,7 +172,7 @@ class BaseDesktopAdapter:
                         raise ValueError(f"Step {step_id} focus_window requires windowTitle.")
                     if not self._is_window_or_app_allowed(step.windowTitle, "", workflow.allowedApps):
                         raise PermissionError(f"Window {step.windowTitle!r} is not in allowedApps={workflow.allowedApps}.")
-                    self.active_window = step.windowTitle
+                    self.activate_window(step.windowTitle)
                     rec = StepExecutionRecord(
                         step_id=step_id,
                         action=action,
@@ -196,7 +205,7 @@ class BaseDesktopAdapter:
                     step=step,
                     candidates=candidates,
                     primary_matcher=self.match_primary,
-                    allowed_scopes=workflow.allowedApps,
+                    allowed_scopes=self.candidate_scopes(workflow.allowedApps),
                     already_executed_write=False,
                 )
                 if not resolution.resolved or not resolution.candidate_id:
@@ -326,6 +335,61 @@ class BaseDesktopAdapter:
 class WindowsUIAAdapter(BaseDesktopAdapter):
     target_name = "windows-uia"
 
+    def __init__(self, initial_nodes: Optional[List[DesktopAccessibleNode]] = None) -> None:
+        super().__init__(initial_nodes)
+        self._bridge = None
+        self._live = initial_nodes is None
+        self._allowed_apps: List[str] = []
+        if self._live:
+            from human2api.windows_live import WindowsUIABridge
+            self._bridge = WindowsUIABridge()
+
+    def execute_workflow(self, workflow, runtime_inputs, vault, secrets_known, cancel_token, **kwargs):
+        self._allowed_apps = list(workflow.allowedApps)
+        return super().execute_workflow(workflow, runtime_inputs, vault, secrets_known, cancel_token, **kwargs)
+
+    def snapshot_candidates(self) -> List[UIElementCandidate]:
+        if self._live:
+            assert self._bridge is not None
+            nodes = self._bridge.snapshot(self._allowed_apps, self.active_window)
+            self.nodes = {n.node_id: n for n in nodes}
+        return super().snapshot_candidates()
+
+    def candidate_scopes(self, allowed_apps: List[str]) -> List[str]:
+        if self._live:
+            # The native bridge admits only app windows matching the explicit allowlist.
+            # Use the resolved full window title for the self-healing exact-scope check.
+            return sorted({n.window_title for n in self.nodes.values()})
+        return allowed_apps
+
+    def match_primary(self, selector: str) -> List[UIElementCandidate]:
+        if self._live:
+            self.snapshot_candidates()  # Refresh changed native labels before post-condition checks.
+        return super().match_primary(selector)
+
+    def activate_window(self, title: str) -> None:
+        if self._live:
+            assert self._bridge is not None
+            self.active_window = self._bridge.focus_window(title, self._allowed_apps)
+        else:
+            self.active_window = title
+
+    def resize_window(self, window_title: str, width: int, height: int) -> None:
+        if self._live:
+            assert self._bridge is not None
+            self._bridge.resize_window(window_title, width, height)
+            self.snapshot_candidates()
+        else:
+            super().resize_window(window_title, width, height)
+
+    def perform_node_action(self, node: DesktopAccessibleNode, action: str, text_val: Optional[str] = None) -> Any:
+        if not self._live:
+            return super().perform_node_action(node, action, text_val)
+        assert self._bridge is not None
+        result = self._bridge.action(node, action, text_val)
+        node.value = str(result or "")
+        return result
+
 
 class MacOSAXAdapter(BaseDesktopAdapter):
     target_name = "macos-ax"
@@ -350,8 +414,8 @@ class LinuxATSPIAdapter(BaseDesktopAdapter):
 
 
 def get_desktop_adapter(target: str, initial_nodes: Optional[List[DesktopAccessibleNode]] = None) -> BaseDesktopAdapter:
-    if target == "windows-uia":
+    if target == "windows-uia" or (target == "desktop" and sys_platform_name() == "windows-uia"):
         return WindowsUIAAdapter(initial_nodes)
-    if target == "macos-ax":
+    if target == "macos-ax" or (target == "desktop" and sys_platform_name() == "macos-ax"):
         return MacOSAXAdapter(initial_nodes)
     return LinuxATSPIAdapter(initial_nodes)

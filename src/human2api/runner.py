@@ -734,7 +734,14 @@ class WorkflowRunner:
     ) -> WorkflowRunReport:
         from human2api.desktop import get_desktop_adapter
 
-        adapter = self.desktop_adapter or get_desktop_adapter(workflow.target)
+        try:
+            adapter = self.desktop_adapter or get_desktop_adapter(workflow.target)
+        except (RuntimeError, ImportError, OSError) as exc:
+            return WorkflowRunReport(
+                workflow_name=workflow.name, target=workflow.target,
+                status="failed", duration_ms=(time.perf_counter() - start_ts) * 1000.0,
+                error=f"Desktop runtime unavailable: {exc}",
+            )
         return adapter.execute_workflow(
             workflow=workflow,
             runtime_inputs=runtime_inputs,
@@ -754,9 +761,16 @@ class WorkflowRunner:
         token: CancellationToken,
         start_ts: float,
     ) -> WorkflowRunReport:
-        from human2api.android import AndroidCompanionClient
+        from human2api.android import LiveAndroidCompanionClient
 
-        adapter = self.android_adapter or AndroidCompanionClient()
+        try:
+            adapter = self.android_adapter or LiveAndroidCompanionClient()
+        except (PermissionError, RuntimeError, ValueError) as exc:
+            return WorkflowRunReport(
+                workflow_name=workflow.name, target=workflow.target, status="failed",
+                duration_ms=(time.perf_counter() - start_ts) * 1000.0,
+                error=f"Android connection is not ready: {exc}",
+            )
         return adapter.execute_workflow(
             workflow=workflow,
             runtime_inputs=runtime_inputs,

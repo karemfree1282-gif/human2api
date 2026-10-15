@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import time
 import urllib.request
+import urllib.error
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Set
 
@@ -203,6 +205,30 @@ class AndroidCompanionClient:
             sanitized["value"] = None
         return sanitized
 
+    def perform_node_action(self, node: AndroidNode, action: str, text: Optional[str] = None) -> Any:
+        """Legacy in-memory adapter action hook. Live adapters send it to Android."""
+        if action in ("type", "type_text", "fill"):
+            node.text = str(text or "")
+            return node.text
+        if action == "click":
+            if not node.clickable or not node.enabled:
+                raise RuntimeError(f"Android node {node.resource_id!r} is not clickable/enabled.")
+            return True
+        if action in ("scroll", "scroll_forward"):
+            if not node.scrollable:
+                raise RuntimeError("Android node is not scrollable")
+            return True
+        if action == "extract_text":
+            if node.is_password:
+                raise PermissionError("Cannot extract a sensitive Android field")
+            return node.text
+        raise RuntimeError(f"Unsupported Android action: {action}")
+
+    def perform_global_action(self, action: str) -> None:
+        """Legacy in-memory adapter hook. The live adapter uses the device bridge."""
+        if action not in ("back", "home"):
+            raise RuntimeError(f"Unsupported global Android action: {action}")
+
     def execute_workflow(
         self,
         workflow: Workflow,
@@ -235,7 +261,8 @@ class AndroidCompanionClient:
                 self.verify_session_and_package(target_pkg, workflow.allowedPackages)
                 self.active_package = target_pkg
 
-                if action in ("back", "home", "scroll", "swipe"):
+                if action in ("back", "home"):
+                    self.perform_global_action(action)
                     rec = StepExecutionRecord(
                         step_id=step_id,
                         action=action,
@@ -284,15 +311,11 @@ class AndroidCompanionClient:
                     text_val, used_sec = resolve_step_parameters(raw_text, workflow, runtime_inputs, vault)
                     secrets_known.update(used_sec)
                     # Supports full Arabic & Unicode UTF-8 via AccessibilityNodeInfo.ACTION_SET_TEXT
-                    node.text = str(text_val or "")
-                elif action == "click":
-                    if not node.clickable or not node.enabled:
-                        raise RuntimeError(f"Android node {node.resource_id!r} is not clickable/enabled.")
-                    node.text = node.text or "clicked"
+                    self.perform_node_action(node, action, str(text_val or ""))
+                elif action in ("click", "scroll", "scroll_forward"):
+                    self.perform_node_action(node, action)
                 elif action == "extract_text":
-                    if node.is_password:
-                        raise PermissionError("Refusing to extract text from a password field on Android.")
-                    extracted = node.text
+                    extracted = self.perform_node_action(node, action)
                     outputs[step.variable or step_id] = extracted
                 elif action in ("assert_text", "assert_visible", "assert_value"):
                     exp_val, used_sec = resolve_step_parameters(
@@ -326,6 +349,32 @@ class AndroidCompanionClient:
                 if step_observer:
                     step_observer(rec)
 
+            for aspec in workflow.assertions:
+                cancel_token.check()
+                wanted, used_sec = resolve_step_parameters(
+                    str(aspec.expected) if aspec.expected is not None else None,
+                    workflow, runtime_inputs, vault,
+                )
+                secrets_known.update(used_sec)
+                self.snapshot_candidates()  # live bridge refresh, not stale memory
+                matched = self.match_primary(aspec.selector or "")
+                if len(matched) != 1:
+                    assertions_failed += 1
+                    raise AssertionFailureError("Android post-assertion selector not found or ambiguous")
+                node = self.nodes[matched[0].candidate_id]
+                if node.is_password:
+                    raise PermissionError("Sensitive Android fields cannot be asserted")
+                actual = node.visible if aspec.type == "assert_visible" else node.text
+                try:
+                    evaluate_assertion(
+                        AssertionSpec(type=aspec.type, selector=aspec.selector, expected=wanted, match=aspec.match),
+                        actual,
+                    )
+                    assertions_passed += 1
+                except AssertionFailureError:
+                    assertions_failed += 1
+                    raise
+
             return WorkflowRunReport(
                 workflow_name=workflow.name,
                 target=workflow.target,
@@ -350,3 +399,117 @@ class AndroidCompanionClient:
                 outputs=outputs,
                 error=redact_secrets(str(exc), secrets_known),
             )
+
+
+class LiveAndroidCompanionClient(AndroidCompanionClient):
+    """Real USB/ADB Android companion client; never falls back to the in-memory mock."""
+
+    def __init__(self, token: Optional[str] = None, port: int = DEFAULT_COMPANION_PORT) -> None:
+        super().__init__(port=port, nodes=[], consent_granted=True)
+        self.bridge_token = (token or os.environ.get("H2A_ANDROID_TOKEN") or "").strip()
+        if not self.bridge_token:
+            raise PermissionError(
+                "No Android pairing code. Enable the companion Accessibility Service, "
+                "approve a 5-minute session on the phone, and use 'h2a android run'."
+            )
+
+    @staticmethod
+    def forward_adb_port(port: int = DEFAULT_COMPANION_PORT, serial: Optional[str] = None) -> str:
+        installed, connected, explanation = AndroidCompanionClient.probe_adb_devices()
+        if not installed:
+            raise RuntimeError("ADB is unavailable: " + explanation + ". Install Android SDK Platform Tools.")
+        if serial and serial not in connected:
+            raise RuntimeError(f"ADB device {serial!r} is not authorized/connected. Connected devices: {connected}")
+        if not serial and len(connected) != 1:
+            raise RuntimeError(f"Exactly one authorized Android device is needed, or pass --serial. Devices: {connected}")
+        selected = serial or connected[0]
+        proc = subprocess.run(
+            ["adb", "-s", selected, "forward", f"tcp:{int(port)}", f"tcp:{DEFAULT_COMPANION_PORT}"],
+            capture_output=True, text=True, timeout=12,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError("Failed to forward Android port: " + proc.stderr.strip())
+        return selected
+
+    def _request(self, path: str, payload: Optional[dict] = None, token_required: bool = True) -> dict:
+        if self.port < 1 or self.port > 65535:
+            raise ValueError("Invalid local Android bridge port")
+        data = None if payload is None else json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        headers = {"Accept": "application/json"}
+        if token_required:
+            headers["X-H2A-Token"] = self.bridge_token
+        if data is not None:
+            headers["Content-Type"] = "application/json; charset=utf-8"
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}{path}", data=data, headers=headers,
+            method="POST" if payload is not None else "GET",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5) as response:
+                raw = response.read(512 * 1024 + 1)
+                if len(raw) > 512 * 1024:
+                    raise RuntimeError("Android bridge response unexpectedly large")
+                return json.loads(raw.decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            raise PermissionError(
+                f"Android bridge refused the request (HTTP {exc.code}). "
+                "Check the phone's consent timer, package allowlist and pairing code."
+            ) from exc
+        except (OSError, urllib.error.URLError) as exc:
+            raise ConnectionError(
+                "Could not reach Android Companion on the forwarded USB port. "
+                "Check USB debugging, 'adb devices', Accessibility Service and ADB forwarding."
+            ) from exc
+
+    def _refresh_remote_nodes(self) -> None:
+        response = self._request("/nodes")
+        if response.get("status") != "ok":
+            raise RuntimeError("Android Companion did not return an approved UI tree")
+        nodes = response.get("nodes")
+        if not isinstance(nodes, list) or len(nodes) > 256:
+            raise RuntimeError("Android Companion sent an invalid UI tree")
+        self.nodes.clear()
+        self.active_package = str(response.get("package_name") or "")
+        for item in nodes:
+            if item.get("is_password") or item.get("package_name") != self.active_package:
+                continue
+            if not isinstance(item.get("node_id"), str):
+                continue
+            self.register_node(AndroidNode(
+                node_id=item["node_id"], resource_id=str(item.get("resource_id") or ""),
+                text=str(item.get("text") or ""), content_desc=str(item.get("content_desc") or ""),
+                class_name=str(item.get("class_name") or ""), package_name=self.active_package,
+                clickable=bool(item.get("clickable")), editable=bool(item.get("editable")),
+                scrollable=bool(item.get("scrollable")), enabled=bool(item.get("enabled")),
+                visible=bool(item.get("visible")), is_password=False,
+            ))
+
+    def snapshot_candidates(self) -> List[UIElementCandidate]:
+        self._refresh_remote_nodes()
+        return super().snapshot_candidates()
+
+    def perform_node_action(self, node: AndroidNode, action: str, text: Optional[str] = None) -> Any:
+        if action == "extract_text":
+            return super().perform_node_action(node, action, text)
+        response = self._request("/action", {
+            "node_id": node.node_id, "resource_id": node.resource_id,
+            "class_name": node.class_name, "content_desc": node.content_desc,
+            "action": action, "text": str(text or ""),
+        })
+        if response.get("performed") is not True:
+            raise RuntimeError("Android device rejected or could not perform the action")
+        if action in ("type", "type_text", "fill"):
+            node.text = str(text or "")
+        return True
+
+    def perform_global_action(self, action: str) -> None:
+        response = self._request("/action", {"action": action})
+        if response.get("performed") is not True:
+            raise RuntimeError("Android device refused the global action")
+
+    def trigger_stop(self) -> None:
+        super().trigger_stop()
+        try:
+            self._request("/stop", {}, token_required=False)
+        except (OSError, RuntimeError, PermissionError):
+            pass

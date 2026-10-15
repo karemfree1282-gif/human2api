@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 import platform
 import sys
@@ -64,6 +65,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_start.add_argument("--port", type=int, default=0, help="Port (0 automatically selects an available port).")
     p_start.add_argument("--no-browser", action="store_true", help="Print URL without launching a browser.")
 
+    # Android USB / ADB companion pairing
+    p_android = sub.add_parser("android", help="Pair with and control the consent-scoped Android companion over USB/ADB.")
+    p_android.add_argument("action", choices=["doctor", "run"], help="Check Android USB connectivity or execute a workflow.")
+    p_android.add_argument("--workflow", help="Android workflow JSON path, required for android run.")
+    p_android.add_argument("--serial", help="ADB device serial when more than one device is connected.")
+    p_android.add_argument("--port", type=int, default=18765, help="Local forwarded Android bridge port.")
+    p_android.add_argument("--allow-write", action="store_true", help="Approve workflow write operations explicitly.")
+
     # mcp
     sub.add_parser("mcp", help="Run the JSON-RPC 2.0 MCP server over stdio.")
 
@@ -116,6 +125,43 @@ def main(argv: Optional[List[str]] = None) -> int:
             for c in checks:
                 print(f"  [{c['status'].upper()}] {c['name']}: {c['details']}")
         return 0
+
+    if args.command == "android":
+        from human2api.android import AndroidCompanionClient, LiveAndroidCompanionClient
+
+        if args.action == "doctor":
+            installed, devices, reason = AndroidCompanionClient.probe_adb_devices()
+            report = {
+                "adb_available": installed, "authorized_devices": devices,
+                "reason": reason, "bridge_port": args.port,
+                "next_step": "Enable USB debugging + Companion Accessibility Service on Android, then run 'h2a android run --workflow <file>'.",
+            }
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            return 0 if installed and bool(devices) else 2
+
+        if not args.workflow:
+            parser.error("h2a android run requires --workflow")
+        try:
+            wf = Workflow.load(args.workflow)
+            if wf.target not in ("android-companion", "android"):
+                raise ValueError("The provided workflow does not target Android.")
+            serial = LiveAndroidCompanionClient.forward_adb_port(port=args.port, serial=args.serial)
+            token = os.environ.get("H2A_ANDROID_TOKEN") or ""
+            if not token:
+                from getpass import getpass
+                token = getpass("Paste the one-time pairing code shown on Android: ").strip()
+            if not token:
+                raise PermissionError("A pairing code is required and must be granted on the phone.")
+            ws = Workspace()
+            client = LiveAndroidCompanionClient(token=token, port=args.port)
+            runner = WorkflowRunner(vault=ws.vault, workspace_dir=ws.root_dir, android_adapter=client)
+            report = runner.run(wf, allow_write=args.allow_write, cancel_token=CancellationToken())
+            ws.history.record_run(report)
+            print(json.dumps({"device": serial, **report.to_dict()}, ensure_ascii=False, indent=2))
+            return 0 if report.status == "passed" else 1
+        except (ConnectionError, RuntimeError, OSError, PermissionError, ValueError) as exc:
+            print(f"Android device is not ready: {exc}", file=sys.stderr)
+            return 2
 
     if args.command == "record":
         rec = WorkflowRecorder(name=args.name, target=args.target)

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="demo_input" type="id" />
+    <item name="demo_submit" type="id" />
+    <item name="demo_result" type="id" />
+</resources>

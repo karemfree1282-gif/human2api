@@ -1,0 +1,51 @@
+{
+  "schemaVersion": "0.5",
+  "name": "Windows UIA Self-Test",
+  "description": "Automates only the Human2API demo window opened using start-windows-demo.bat.",
+  "version": "1.0.0",
+  "target": "windows-uia",
+  "mode": "write",
+  "allowedApps": [
+    "Human2API Windows Demo"
+  ],
+  "inputs": {
+    "message": {
+      "type": "string",
+      "required": true,
+      "sensitive": false,
+      "default": "مرحبا Windows"
+    }
+  },
+  "steps": [
+    {
+      "id": "focus_demo",
+      "action": "focus_window",
+      "windowTitle": "Human2API Windows Demo"
+    },
+    {
+      "id": "type_note",
+      "action": "type",
+      "selector": "automationId=\"demo_input\"",
+      "automationId": "demo_input",
+      "role": "textbox",
+      "text": "${input:message}",
+      "isWriteAction": true
+    },
+    {
+      "id": "save_note",
+      "action": "click",
+      "selector": "automationId=\"demo_submit\"",
+      "automationId": "demo_submit",
+      "role": "button",
+      "isWriteAction": true
+    }
+  ],
+  "assertions": [
+    {
+      "type": "assert_text",
+      "selector": "automationId=\"demo_result\"",
+      "expected": "${input:message}",
+      "match": "contains"
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+name: Windows Python and UIA host checks
+on:
+  push:
+    paths:
+      - 'src/**'
+      - 'tests/test_platform_bridges.py'
+      - 'scripts/windows_demo.ps1'
+      - 'start-human2api.bat'
+      - 'start-windows-demo.bat'
+      - '.github/workflows/windows.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'tests/test_platform_bridges.py'
+      - 'scripts/windows_demo.ps1'
+      - 'start-human2api.bat'
+      - 'start-windows-demo.bat'
+      - '.github/workflows/windows.yml'
+  workflow_dispatch:
+jobs:
+  windows-runtime:
+    runs-on: windows-2022
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Windows runtime dependencies
+        run: python -m pip install -e ".[browser,accessibility,dev]"
+      - name: Windows bridge tests
+        run: python -m pytest tests/test_platform_bridges.py -q
+      - name: Package Windows runtime wheel
+        run: python -m pip wheel . --no-deps -w dist
+      - name: Upload Windows Python package
+        uses: actions/upload-artifact@v4
+        with:
+          name: human2api-windows-runtime-wheel
+          path: dist/*.whl
+          if-no-files-found: error

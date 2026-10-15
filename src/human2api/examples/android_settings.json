@@ -4,8 +4,10 @@
   "description": "Android AccessibilityService workflow scoped to com.android.settings with Unicode input.",
   "version": "1.0.0",
   "target": "android-companion",
-  "mode": "read",
-  "allowedPackages": ["com.android.settings"],
+  "mode": "write",
+  "allowedPackages": [
+    "com.android.settings"
+  ],
   "inputs": {
     "query": {
       "type": "string",

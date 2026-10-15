@@ -1,0 +1,46 @@
+{
+  "schemaVersion": "0.5",
+  "name": "Android Companion Self-Test",
+  "description": "Writes a safe note inside the Human2API companion demo. Requires explicit 5-minute on-device consent.",
+  "version": "1.0.0",
+  "target": "android-companion",
+  "mode": "write",
+  "allowedPackages": [
+    "dev.human2api.companion"
+  ],
+  "inputs": {
+    "message": {
+      "type": "string",
+      "required": true,
+      "sensitive": false,
+      "default": "مرحبا Android"
+    }
+  },
+  "steps": [
+    {
+      "id": "type_demo_note",
+      "action": "type_text",
+      "packageName": "dev.human2api.companion",
+      "resourceId": "dev.human2api.companion:id/demo_input",
+      "selector": "dev.human2api.companion:id/demo_input",
+      "text": "${input:message}",
+      "isWriteAction": true
+    },
+    {
+      "id": "save_demo_note",
+      "action": "click",
+      "packageName": "dev.human2api.companion",
+      "resourceId": "dev.human2api.companion:id/demo_submit",
+      "selector": "dev.human2api.companion:id/demo_submit",
+      "isWriteAction": true
+    }
+  ],
+  "assertions": [
+    {
+      "type": "assert_text",
+      "selector": "dev.human2api.companion:id/demo_result",
+      "expected": "${input:message}",
+      "match": "contains"
+    }
+  ]
+}
