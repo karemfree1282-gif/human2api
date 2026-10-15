@@ -53,18 +53,22 @@ def check_dependencies_and_toolchains() -> List[CheckItemResult]:
     results: List[CheckItemResult] = []
     t0 = time.perf_counter()
 
-    # Core Python & Crypto
+    # Core crypto is required; at least one browser engine is required for
+    # browser automation. Do not claim Selenium is mandatory when Playwright
+    # is available and the runner supports it directly.
     try:
+        import importlib.util
         import cryptography  # noqa: F401
-        import selenium  # noqa: F401
-
+        engines = [name for name in ("selenium", "playwright") if importlib.util.find_spec(name)]
+        if not engines:
+            raise ImportError('No browser engine installed. Run: python -m pip install -e ".[browser]"')
         results.append(
             CheckItemResult(
                 name="python_core_and_browser_deps",
                 category="dependencies",
                 status="passed",
                 duration_ms=(time.perf_counter() - t0) * 1000.0,
-                details=f"Python {sys.version.split()[0]}, cryptography & selenium available.",
+                details=f"Python {sys.version.split()[0]}, cryptography & browser engine(s) {', '.join(engines)} available.",
             )
         )
     except Exception as exc:
@@ -88,7 +92,7 @@ def check_dependencies_and_toolchains() -> List[CheckItemResult]:
                 category="dependencies",
                 status="passed",
                 duration_ms=(time.perf_counter() - t1) * 1000.0,
-                details=f"Found Chromium at {chrom} (127.0.0.2 loopback E2E enabled).",
+                details=f"Found Chromium at {chrom}. Browser network navigation still requires local policy permission.",
             )
         )
     else:

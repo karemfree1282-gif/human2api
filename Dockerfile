@@ -17,4 +17,5 @@ COPY . /app
 RUN pip install --no-cache-dir -e ".[browser,vault,signing]"
 
 EXPOSE 8000
-CMD ["python3", "scripts/complete.py", "--repair"]
+# Keep the local API loopback-only. On Linux use --network host for local access.
+CMD ["python3", "-m", "human2api", "start", "--no-browser", "--host", "127.0.0.1", "--port", "8000"]

@@ -38,6 +38,21 @@ SENSITIVE_SINGLETON_HEADERS = {
 
 ALLOWED_LOOPBACK_HOSTS = {"127.0.0.1", "127.0.0.2", "localhost", "[::1]", "::1"}
 
+
+def _safe_workflow_path(workspace: Workspace, untrusted_name: str) -> pathlib.Path:
+    """Resolve one workflow filename only; never load/delete outside workflows/."""
+    name = urllib.parse.unquote(str(untrusted_name))
+    if not name or name in (".", "..") or any(ch in name for ch in ("/", "\\", "\x00")):
+        raise ValueError("Invalid workflow filename")
+    if not all(c.isalnum() or c in "._-" for c in name):
+        raise ValueError("Invalid workflow filename")
+    if not name.endswith(".json"):
+        name += ".json"
+    candidate = (workspace.workflows_dir / name).resolve()
+    if candidate.parent != workspace.workflows_dir.resolve():
+        raise ValueError("Workflow path must stay inside workflows directory")
+    return candidate
+
 DEMO_APP_HTML = """<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
@@ -375,9 +390,11 @@ class Human2APIServer:
                     if path.startswith("/api/v1/workflows/") and method in ("PUT", "DELETE", "POST"):
                         parts = [p for p in path.split("/") if p]
                         wf_slug = urllib.parse.unquote(parts[3])
-                        wf_file = server_ref.workspace.workflows_dir / (
-                            wf_slug if wf_slug.endswith(".json") else f"{wf_slug}.json"
-                        )
+                        try:
+                            wf_file = _safe_workflow_path(server_ref.workspace, wf_slug)
+                        except ValueError as exc:
+                            self._send_json(400, {"error": str(exc)})
+                            return
                         if not wf_file.exists():
                             self._send_json(404, {"error": f"Workflow {wf_slug!r} not found."})
                             return
@@ -450,9 +467,7 @@ class Human2APIServer:
                                 wf = Workflow.from_dict(body["workflow"])
                             elif "workflowName" in body:
                                 wf_name = str(body["workflowName"])
-                                wf_path = server_ref.workspace.workflows_dir / (
-                                    wf_name if wf_name.endswith(".json") else f"{wf_name}.json"
-                                )
+                                wf_path = _safe_workflow_path(server_ref.workspace, wf_name)
                                 wf = Workflow.load(wf_path)
                             else:
                                 self._send_json(400, {"error": "Provide 'workflow' object or 'workflowName'."})

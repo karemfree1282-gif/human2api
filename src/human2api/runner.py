@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import pathlib
+import socket
 import re
 import time
 import urllib.parse
@@ -34,11 +35,21 @@ def normalize_loopback_url_for_chromium(url: str) -> str:
     if not url:
         return url
     parsed = urllib.parse.urlparse(url)
-    if parsed.scheme in ("http", "https") and parsed.hostname in ("127.0.0.1", "localhost"):
-        port_part = f":{parsed.port}" if parsed.port else ""
-        new_netloc = f"127.0.0.2{port_part}"
-        return urllib.parse.urlunparse(parsed._replace(netloc=new_netloc))
-    return url
+    if parsed.scheme not in ("http", "https") or parsed.hostname not in ("127.0.0.1", "localhost"):
+        return url
+    # Do not blindly redirect to .2: an app bound only to .1 becomes unreachable.
+    # The alternate loopback is useful only when it actually hosts this port.
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    def listening(host: str) -> bool:
+        try:
+            with socket.create_connection((host, port), timeout=0.12):
+                return True
+        except OSError:
+            return False
+    if listening(parsed.hostname) or not listening("127.0.0.2"):
+        return url
+    replacement = parsed._replace(netloc=f"127.0.0.2:{port}")
+    return urllib.parse.urlunparse(replacement)
 
 
 class ChromiumBrowserSession:
@@ -66,15 +77,36 @@ class ChromiumBrowserSession:
         self.driver = None
 
     def start(self) -> None:
-        from selenium import webdriver
-        from selenium.webdriver.chrome.options import Options
-
         self.downloads_dir.mkdir(parents=True, exist_ok=True)
         self.uploads_dir.mkdir(parents=True, exist_ok=True)
+        # Honor an explicit choice; otherwise use Selenium if it can start,
+        # falling back to Playwright rather than failing with a raw ImportError.
+        preferred = os.environ.get("H2A_BROWSER_ENGINE", "auto").lower()
+        if preferred not in ("auto", "selenium", "playwright"):
+            raise ValueError("H2A_BROWSER_ENGINE must be auto, selenium, or playwright")
+        selenium_error = None
+        if preferred == "playwright":
+            from human2api.playwright_driver import PlaywrightDriver
+            self.driver = PlaywrightDriver(self.downloads_dir, headless=self.headless)
+            self._engine = "playwright"
+            return
+        try:
+            from selenium import webdriver
+            from selenium.webdriver.chrome.options import Options
+        except ImportError as exc:
+            selenium_error = exc
+            if preferred == "selenium":
+                raise RuntimeError('Selenium is not installed. Run: python -m pip install -e ".[browser]"') from exc
+        if selenium_error is not None:
+            from human2api.playwright_driver import PlaywrightDriver
+            self.driver = PlaywrightDriver(self.downloads_dir, headless=self.headless)
+            self._engine = "playwright"
+            return
         opts = Options()
         if self.headless:
             opts.add_argument("--headless=new")
-        opts.add_argument("--no-sandbox")
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            opts.add_argument("--no-sandbox")
         opts.add_argument("--disable-dev-shm-usage")
         opts.add_argument("--disable-gpu")
         opts.add_argument("--window-size=1280,900")
@@ -85,8 +117,16 @@ class ChromiumBrowserSession:
             "profile.password_manager_enabled": False,
         }
         opts.add_experimental_option("prefs", prefs)
-        self.driver = webdriver.Chrome(options=opts)
-        self.driver.set_page_load_timeout(15)
+        try:
+            self.driver = webdriver.Chrome(options=opts)
+            self._engine = "selenium"
+            self.driver.set_page_load_timeout(15)
+        except Exception as exc:
+            if preferred == "selenium":
+                raise RuntimeError(f"ChromeDriver failed to launch: {exc}") from exc
+            from human2api.playwright_driver import PlaywrightDriver
+            self.driver = PlaywrightDriver(self.downloads_dir, headless=self.headless)
+            self._engine = "playwright"
 
     def stop(self) -> None:
         if self.driver is not None:
@@ -107,27 +147,25 @@ class ChromiumBrowserSession:
             self.driver.switch_to.frame(el)
 
     def _find_raw_element(self, selector: str):
-        from selenium.webdriver.common.by import By
-
         if self.driver is None or not selector:
             return None
         matches = self._find_raw_elements(selector)
         return matches[0] if len(matches) == 1 else None
 
     def _find_raw_elements(self, selector: str) -> List[Any]:
-        from selenium.webdriver.common.by import By
-
         if self.driver is None or not selector:
             return []
         sel = selector.strip()
         try:
             if sel.startswith("//") or sel.startswith("(//"):
-                return self.driver.find_elements(By.XPATH, sel)
+                return self.driver.find_elements("xpath", sel)
             if sel.startswith("role="):
                 # Parse role=button[name="Submit"]
                 m = re.match(r'^role=([a-zA-Z0-9_-]+)(?:\[name="([^"]+)"\])?$', sel)
                 if m:
                     role_val, name_val = m.group(1), m.group(2)
+                    if getattr(self, "_engine", "selenium") == "playwright":
+                        return self.driver.find_by_role(role_val, name_val or "")
                     js = """
                     const role = arguments[0].toLowerCase();
                     const name = (arguments[1] || "").toLowerCase();
@@ -142,7 +180,7 @@ class ChromiumBrowserSession:
                     });
                     """
                     return self.driver.execute_script(js, role_val, name_val or "") or []
-            return self.driver.find_elements(By.CSS_SELECTOR, sel)
+            return self.driver.find_elements("css selector", sel)
         except Exception:
             return []
 
@@ -511,17 +549,19 @@ class WorkflowRunner:
                             target_el.send_keys(text_val or "")
 
                         elif action == "select":
-                            from selenium.webdriver.support.ui import Select
-
                             raw_val = str(step.value if step.value is not None else (step.text or ""))
                             val_resolved, used_sec = resolve_step_parameters(raw_val, workflow, runtime_inputs, self.vault)
                             secrets_known.update(used_sec)
                             already_dispatched_write = True
-                            sel_obj = Select(target_el)
-                            try:
-                                sel_obj.select_by_value(val_resolved or "")
-                            except Exception:
-                                sel_obj.select_by_visible_text(val_resolved or "")
+                            if hasattr(target_el, "select_by_value"):
+                                target_el.select_by_value(val_resolved or "")
+                            else:
+                                from selenium.webdriver.support.ui import Select
+                                sel_obj = Select(target_el)
+                                try:
+                                    sel_obj.select_by_value(val_resolved or "")
+                                except Exception:
+                                    sel_obj.select_by_visible_text(val_resolved or "")
 
                         elif action == "upload_file":
                             raw_path, used_sec = resolve_step_parameters(step.filePath, workflow, runtime_inputs, self.vault)

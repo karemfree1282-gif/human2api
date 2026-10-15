@@ -7,6 +7,7 @@ import json
 import pathlib
 import platform
 import sys
+import webbrowser
 from typing import List, Optional
 
 from human2api import __version__
@@ -55,6 +56,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_srv = sub.add_parser("serve", help="Start the local loopback REST API and Visual Studio server.")
     p_srv.add_argument("--host", default="127.0.0.1", help="Loopback bind address (127.0.0.1 or 127.0.0.2).")
     p_srv.add_argument("--port", type=int, default=8000, help="Port number.")
+
+    # start (one-command first-run launcher)
+    p_start = sub.add_parser("start", help="Launch Studio, create a safe local demo, and open the browser.")
+    p_start.add_argument("--dir", default=".", help="Workspace folder (defaults to current directory).")
+    p_start.add_argument("--host", default="127.0.0.1", help="Local loopback address.")
+    p_start.add_argument("--port", type=int, default=0, help="Port (0 automatically selects an available port).")
+    p_start.add_argument("--no-browser", action="store_true", help="Print URL without launching a browser.")
 
     # mcp
     sub.add_parser("mcp", help="Run the JSON-RPC 2.0 MCP server over stdio.")
@@ -136,17 +144,32 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(json.dumps(rep.to_dict(), ensure_ascii=False, indent=2))
         return 0 if rep.status == "passed" else 1
 
-    if args.command == "serve":
-        ws = Workspace()
+    if args.command in ("serve", "start"):
+        ws = Workspace(pathlib.Path(args.dir)) if args.command == "start" else Workspace()
         srv = Human2APIServer(workspace=ws, host=args.host, port=args.port)
-        url = srv.start()
-        print(f"Human2API Studio & REST Server listening on {url} (Token: {srv.auth_token})")
+        try:
+            url = srv.start()
+        except OSError as exc:
+            print(f"Cannot start local server: {exc}. Try 'h2a start --port 0'.", file=sys.stderr)
+            return 1
+        if args.command == "start":
+            from human2api.quickstart import ensure_local_demo
+
+            demo = ensure_local_demo(ws, url)
+            print(f"Demo workflow ready: {demo.name}")
+        print(f"Human2API Studio is running at {url}/", flush=True)
+        print(f"REST API at {url}/api/v1/health (requires your local Studio token)", flush=True)
+        print("Press Ctrl+C to stop the server.", flush=True)
+        if args.command == "start" and not args.no_browser:
+            if not webbrowser.open(f"{url}/", new=2):
+                print("Open the Studio URL shown above in your browser.", flush=True)
         try:
             import time
-
             while True:
                 time.sleep(1.0)
         except KeyboardInterrupt:
+            pass
+        finally:
             srv.stop()
         return 0
 

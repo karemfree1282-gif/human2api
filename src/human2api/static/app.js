@@ -1,10 +1,12 @@
 (() => {
+  const demoUrl = new URL("/demo", document.baseURI).href;
   const state = {
     lang: "ar",
     theme: "dark",
     activeRunId: null,
+    workflows: [],
     editorSteps: [
-      { action: "goto", url: "/demo", selector: null },
+      { action: "goto", url: demoUrl, selector: null },
       { action: "type", selector: "#customer-name", text: "${input:customer}", role: "textbox", name: "اسم العميل" },
       { action: "type", selector: "#invoice-amount", text: "${input:amount}", role: "textbox", name: "قيمة الفاتورة" },
       { action: "click", selector: "#submit-invoice-btn", role: "button", name: "إصدار الفاتورة" },
@@ -20,7 +22,7 @@
     ar: {
       appTitle: "Human2API Studio",
       appSubtitle: "علّم الكمبيوتر أو المتصفح أو الهاتف مهمة مرة واحدة، وحوّلها إلى API وأداة MCP",
-      recordNewTask: "تسجيل مهمة جديدة",
+      recordNewTask: "إنشاء مهمة تجريبية",
       tabDashboard: "لوحة التحكم (Dashboard)",
       tabEditor: "محرر المهام البصري (Workflow Editor)",
       tabSchedules: "المهام المجدولة (Schedules)",
@@ -31,7 +33,7 @@
     en: {
       appTitle: "Human2API Studio",
       appSubtitle: "Teach your browser, desktop, or Android phone once — reuse via REST API & MCP",
-      recordNewTask: "Record New Task",
+      recordNewTask: "Create Demo Workflow",
       tabDashboard: "Dashboard",
       tabEditor: "Visual Workflow Editor",
       tabSchedules: "Scheduled Tasks",
@@ -48,9 +50,13 @@
     };
     const opts = { method, headers };
     if (body !== null) opts.body = JSON.stringify(body);
-    const resp = await fetch(path, opts);
-    const data = await resp.json().catch(() => ({}));
-    return { status: resp.status, data };
+    try {
+      const resp = await fetch(path, opts);
+      const data = await resp.json().catch(() => ({}));
+      return { status: resp.status, data };
+    } catch (err) {
+      return { status: 0, data: { error: `Cannot reach the local API: ${String(err)}` } };
+    }
   }
 
   function renderEditorSteps() {
@@ -117,12 +123,18 @@
     const sel = document.getElementById("dashboard-workflow-select");
     if (sel && wfRes.status === 200) {
       sel.innerHTML = "";
-      (wfRes.data.workflows || []).forEach(wf => {
+      state.workflows = wfRes.data.workflows || [];
+      state.workflows.forEach(wf => {
         const opt = document.createElement("option");
         opt.value = wf.filename || wf.name;
+        opt.dataset.mode = wf.mode || "write";
         opt.textContent = `${wf.name} (${wf.target})`;
         sel.appendChild(opt);
       });
+      const sched = document.getElementById("sched-wf-name");
+      if (sched && state.workflows.length && !sched.dataset.edited) {
+        sched.value = state.workflows[0].name;
+      }
     }
   }
 
@@ -175,7 +187,7 @@
         instBtn.className = "btn btn-primary";
         instBtn.textContent = "تثبيت موثق";
         instBtn.onclick = async () => {
-          await apiCall("/api/v1/marketplace/install", "POST", { tool_id: pkg.tool_id, version: pkg.version, allowPrivilegeExpansion: true });
+          await apiCall("/api/v1/marketplace/install", "POST", { tool_id: pkg.tool_id, version: pkg.version, allowPrivilegeExpansion: false });
           refreshMarketplace();
           refreshDashboard();
         };
@@ -239,7 +251,7 @@
       target,
       save: true,
       events: [
-        { action: "goto", url: window.location.origin + "/demo" },
+        { action: "goto", url: new URL("/demo", document.baseURI).href },
         { action: "type", id: "customer-name", name_attr: "customer_name", value: "عميل مسجل" },
         { action: "type", id: "api-password", name_attr: "api_password", input_type: "password", is_password: true, value: "SuperSecret" },
         { action: "click", id: "submit-invoice-btn", accessible_name: "إصدار الفاتورة" }
@@ -249,6 +261,8 @@
     if (res.status === 201) {
       document.getElementById("live-status-text").textContent = `تم تسجيل وحفظ المهمة بنجاح: ${res.data.workflow.name}`;
       await refreshDashboard();
+    } else {
+      document.getElementById("live-status-text").textContent = `تعذر إنشاء النموذج التجريبي: ${res.data.error || res.status}`;
     }
   });
 
@@ -258,7 +272,10 @@
     const selOrUrl = document.getElementById("new-step-selector").value.trim();
     const val = document.getElementById("new-step-value").value.trim();
     const step = { action };
-    if (action === "goto") step.url = selOrUrl || "/demo";
+    if (action === "goto") {
+      try { step.url = new URL(selOrUrl || "/demo", document.baseURI).href; }
+      catch (err) { document.getElementById("live-status-text").textContent = `رابط غير صالح: ${String(err)}`; return; }
+    }
     else step.selector = selOrUrl || "#submit-invoice-btn";
     if (action === "assert_text") step.expected = val || "تم";
     else if (val) step.text = val;
@@ -284,6 +301,7 @@
     const name = document.getElementById("wf-name-input").value.trim() || "مهمة جديدة";
     const target = document.getElementById("wf-target-select").value;
     const hosts = document.getElementById("wf-hosts-input").value.split(",").map(s => s.trim()).filter(Boolean);
+    if (!hosts.includes(window.location.hostname)) hosts.push(window.location.hostname);
     const res = await apiCall("/api/v1/workflows", "POST", {
       name,
       target,
@@ -295,44 +313,95 @@
     if (res.status === 201) {
       document.getElementById("live-status-text").textContent = `تم حفظ المهمة ${name} بنجاح.`;
       await refreshDashboard();
+    } else {
+      document.getElementById("live-status-text").textContent = `تعذر حفظ المهمة: ${res.data.error || res.status}`;
     }
   });
 
-  // Run & Stop
-  document.getElementById("btn-run-selected")?.addEventListener("click", async () => {
-    const sel = document.getElementById("dashboard-workflow-select");
-    const wfName = sel?.value;
-    if (!wfName) return;
-    const allowWrite = document.getElementById("chk-allow-write").checked;
-    document.getElementById("live-status-text").textContent = "جاري تشغيل المهمة...";
-    const res = await apiCall("/api/v1/run", "POST", { workflowName: wfName, allowWrite });
-    state.activeRunId = res.data.run_id || null;
-    if (res.data.report) {
-      const rep = res.data.report;
-      document.getElementById("live-status-text").textContent =
-        rep.status === "passed"
-          ? `اكتملت المهمة بنجاح (${rep.steps.length} خطوات، ${rep.assertions_passed} تحققات)`
-          : `توقفت المهمة (${rep.status}): ${rep.error || ""}`;
-      await refreshHistory();
+  // Run asynchronously: the browser UI must remain responsive to STOP.
+  function showFinishedRun(rep) {
+    document.getElementById("live-status-text").textContent =
+      rep.status === "passed"
+        ? `اكتملت المهمة بنجاح (${(rep.steps || []).length} خطوات، ${rep.assertions_passed} تحققات)`
+        : `توقفت المهمة (${rep.status}): ${rep.error || "تحقق من سجل التشغيل"}`;
+    refreshHistory();
+  }
+
+  async function watchRun(runId) {
+    for (let attempt = 0; attempt < 900; attempt += 1) {
+      if (state.activeRunId !== runId) return;
+      const res = await apiCall(`/api/v1/runs/${encodeURIComponent(runId)}`);
+      if (res.status !== 200) {
+        document.getElementById("live-status-text").textContent = `تعذر استعلام حالة التنفيذ: ${res.data.error || res.status}`;
+        state.activeRunId = null;
+        return;
+      }
+      if (res.data.report) {
+        showFinishedRun(res.data.report);
+        state.activeRunId = null;
+        return;
+      }
+      document.getElementById("live-status-text").textContent = `جاري التنفيذ... (${(res.data.steps || []).length} خطوات)`;
+      await new Promise(resolve => setTimeout(resolve, 500));
     }
+    document.getElementById("live-status-text").textContent = "المهمة ما زالت قيد التشغيل. راجع سجل التنفيذ.";
+    state.activeRunId = null;
+  }
+
+  document.getElementById("btn-run-selected")?.addEventListener("click", async () => {
+    if (state.activeRunId) return;
+    const wfName = document.getElementById("dashboard-workflow-select")?.value;
+    if (!wfName) {
+      document.getElementById("live-status-text").textContent = "أنشئ مهمة أو اختر مهمة محفوظة أولًا.";
+      return;
+    }
+    const allowWrite = document.getElementById("chk-allow-write").checked;
+    const selected = document.getElementById("dashboard-workflow-select")?.selectedOptions[0];
+    if (selected?.dataset.mode === "write" && !allowWrite) {
+      document.getElementById("live-status-text").textContent = "هذه المهمة تكتب بيانات؛ فعّل الموافقة على الكتابة قبل تشغيلها.";
+      return;
+    }
+    document.getElementById("live-status-text").textContent = "جاري بدء المهمة...";
+    const res = await apiCall("/api/v1/run", "POST", { workflowName: wfName, allowWrite, async: true });
+    if (res.status !== 202 || !res.data.run_id) {
+      document.getElementById("live-status-text").textContent = `تعذر بدء المهمة: ${res.data.error || res.status}`;
+      return;
+    }
+    state.activeRunId = res.data.run_id;
+    watchRun(state.activeRunId);
   });
 
   document.getElementById("btn-stop-run")?.addEventListener("click", async () => {
-    if (state.activeRunId) {
-      await apiCall(`/api/v1/runs/${state.activeRunId}/cancel`, "POST", {});
+    if (!state.activeRunId) {
+      document.getElementById("live-status-text").textContent = "لا توجد مهمة قيد التشغيل.";
+      return;
     }
-    document.getElementById("live-status-text").textContent = "تم إرسال إشارة الإيقاف الفوري.";
+    const res = await apiCall(`/api/v1/runs/${state.activeRunId}/cancel`, "POST", {});
+    document.getElementById("live-status-text").textContent = res.status === 200
+      ? "تم إرسال طلب الإيقاف. سيتم التوقف عند نقطة تحقق آمنة."
+      : `تعذر طلب الإيقاف: ${res.data.error || res.status}`;
   });
 
   // Schedules, History, Marketplace, Settings
+  document.getElementById("sched-wf-name")?.addEventListener("input", (e) => { e.target.dataset.edited = "true"; });
   document.getElementById("btn-create-schedule")?.addEventListener("click", async () => {
-    const wfName = document.getElementById("sched-wf-name").value.trim() || "Scheduled Task";
+    const wfName = document.getElementById("sched-wf-name").value.trim();
     const interval = parseInt(document.getElementById("sched-interval").value || "60", 10);
-    await apiCall("/api/v1/schedules", "POST", {
-      workflowPath: `workflows/${wfName}.json`,
-      workflowName: wfName,
+    const workflow = state.workflows.find(w => w.name === wfName || w.filename === wfName);
+    if (!workflow) {
+      document.getElementById("live-status-text").textContent = "الجدولة تحتاج مهمة محفوظة موجودة. اختر الاسم من لوحة التحكم أو اكتب اسمه بدقة.";
+      return;
+    }
+    const result = await apiCall("/api/v1/schedules", "POST", {
+      workflowPath: `workflows/${workflow.filename}`,
+      workflowName: workflow.name,
       intervalSeconds: interval
     });
+    if (result.status !== 201 && result.status !== 200) {
+      document.getElementById("live-status-text").textContent = `تعذرت الجدولة: ${result.data.error || result.status}`;
+    } else {
+      document.getElementById("live-status-text").textContent = `تمت جدولة المهمة: ${workflow.name}`;
+    }
     await refreshSchedules();
     await refreshDashboard();
   });
@@ -341,8 +410,14 @@
   document.getElementById("btn-mp-search")?.addEventListener("click", refreshMarketplace);
 
   document.getElementById("btn-vault-unlock")?.addEventListener("click", async () => {
-    const passphrase = document.getElementById("vault-passphrase").value || "default-pass";
-    await apiCall("/api/v1/vault/unlock", "POST", { passphrase });
+    const passphrase = document.getElementById("vault-passphrase").value;
+    if (!passphrase) {
+      document.getElementById("live-status-text").textContent = "أدخل كلمة مرور الخزنة أولًا.";
+      return;
+    }
+    const result = await apiCall("/api/v1/vault/unlock", "POST", { passphrase });
+    document.getElementById("live-status-text").textContent = result.status === 200
+      ? "تم فتح الخزنة." : `تعذر فتح الخزنة: ${result.data.error || result.status}`;
     await refreshDashboard();
   });
 
@@ -355,15 +430,19 @@
     const name = document.getElementById("secret-key-input").value.trim();
     const value = document.getElementById("secret-val-input").value;
     if (name && value) {
-      await apiCall("/api/v1/vault/secrets", "POST", { name, value });
-      document.getElementById("secret-val-input").value = "";
+      const result = await apiCall("/api/v1/vault/secrets", "POST", { name, value });
+      document.getElementById("live-status-text").textContent = result.status === 201
+        ? "تم حفظ السر بأمان." : `تعذر حفظ السر: ${result.data.error || result.status}`;
+      if (result.status === 201) document.getElementById("secret-val-input").value = "";
     }
   });
 
   document.getElementById("btn-save-settings")?.addEventListener("click", async () => {
     const aiHealingConsent = document.getElementById("chk-ai-healing-consent").checked;
     const networkPolicy = document.getElementById("sel-network-policy").value;
-    await apiCall("/api/v1/settings", "POST", { aiHealingConsent, networkPolicy });
+    const result = await apiCall("/api/v1/settings", "POST", { aiHealingConsent, networkPolicy });
+    document.getElementById("live-status-text").textContent = result.status === 200
+      ? "تم حفظ الإعدادات." : `تعذر حفظ الإعدادات: ${result.data.error || result.status}`;
   });
 
   renderEditorSteps();

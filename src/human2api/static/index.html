@@ -17,7 +17,7 @@
       </div>
     </div>
     <div class="top-controls">
-      <button id="btn-record-new" class="btn btn-primary" data-testid="btn-record-new">● <span data-i18n="recordNewTask">تسجيل مهمة جديدة</span></button>
+      <button id="btn-record-new" class="btn btn-primary" data-testid="btn-record-new">● <span data-i18n="recordNewTask">إنشاء مهمة تجريبية</span></button>
       <button id="btn-toggle-lang" class="btn btn-outline" data-testid="btn-toggle-lang">English / العربية</button>
       <button id="btn-toggle-theme" class="btn btn-outline" data-testid="btn-toggle-theme">☀️ / 🌙</button>
     </div>
@@ -59,7 +59,7 @@
         <div class="run-bar">
           <select id="dashboard-workflow-select" data-testid="dashboard-workflow-select"></select>
           <label class="checkbox-inline">
-            <input type="checkbox" id="chk-allow-write" data-testid="chk-allow-write" checked />
+            <input type="checkbox" id="chk-allow-write" data-testid="chk-allow-write" />
             <span data-i18n="allowWriteLabel">موافقة على عمليات الكتابة (Write Approval)</span>
           </label>
           <button id="btn-run-selected" class="btn btn-success" data-testid="btn-run-selected">▶ <span data-i18n="runNow">تشغيل الآن</span></button>
@@ -193,8 +193,8 @@
   <!-- Record Task Modal -->
   <div id="record-modal" class="modal hidden" data-testid="record-modal">
     <div class="modal-content">
-      <h2>تسجيل مهمة جديدة (Record Interactive Workflow)</h2>
-      <p>أدخل اسم المهمة والمنصة، وسيتم استبدال كلمات المرور بمتغيرات سرية تلقائيًا.</p>
+      <h2>إنشاء مهمة تجريبية جاهزة (Create Demo Workflow)</h2>
+      <p>هذا ينشئ مثالًا محليًا قابلًا للتعديل للاختبار، وليس تسجيلًا حيًا لتفاعلات موقع خارجي.</p>
       <input id="rec-task-name" data-testid="rec-task-name" placeholder="اسم المهمة المسجلة" value="مهمة بوابة الفواتير" />
       <select id="rec-task-target" data-testid="rec-task-target">
         <option value="browser">المتصفح (Browser)</option>
@@ -204,7 +204,7 @@
         <option value="android-companion">Android Companion</option>
       </select>
       <div class="modal-actions">
-        <button id="btn-confirm-record" class="btn btn-success" data-testid="btn-confirm-record">حفظ وإنشاء المهمة المسجلة</button>
+        <button id="btn-confirm-record" class="btn btn-success" data-testid="btn-confirm-record">إنشاء المهمة التجريبية</button>
         <button id="btn-close-record-modal" class="btn btn-outline" data-testid="btn-close-record-modal">إغلاق</button>
       </div>
     </div>

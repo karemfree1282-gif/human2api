@@ -1,0 +1,31 @@
+{
+  "project": "Human2API",
+  "version": "0.5.0",
+  "audit_date": "2026-10-15",
+  "environment": "Linux Python 3.13.5 / Chromium 144 / browser network navigation managed policy restrictions",
+  "checks": {
+    "local_http_server_start": "passed",
+    "api_health_status_static_demo": "passed, HTTP 200",
+    "cli_h2a_start_with_seeded_demo": "passed",
+    "clean_wheel_build_and_install": "passed",
+    "playwright_chromium_real_dom_type_click_assert": "passed using set_content, without network navigation",
+    "javascript_ui_with_real_backend_via_test_bridge": "passed: create workflow, save editor, create schedule, unlock vault, zero page errors",
+    "portable_regressions": "214 passed, 1 live GTK ATK test deselected; browser URL-navigation suites excluded",
+    "all_automated_tests": "221 tests: 214 passed, 5 failures, 2 errors due to browser admin navigation restrictions + missing live Linux GTK/Xvnc",
+    "windows_native_application": "not executed on Windows",
+    "android_apk_device": "not executed; Android SDK/Gradle/physical-device unavailable",
+    "github_hosted_ci": "not certified: GitHub Actions blocked by account billing lock, issue #8"
+  },
+  "limitations": [
+    "The restricted test environment blocks Chromium network navigation, including 127.0.0.1 and 127.0.0.2.",
+    "Browser UI was verified in Chromium DOM with in-process Python HTTP bridge; direct Chromium HTTP loopback navigation was not verified.",
+    "The 5 browser and 1 Studio browser E2E tests and 1 real Linux desktop test require platform capabilities not available here.",
+    "Windows launcher is supplied and syntax inspected, but cannot be fully executed on this Linux test host."
+  ],
+  "security": [
+    "No force push",
+    "Host stays loopback-only",
+    "Explicit write approval",
+    "Reject workflow filename traversal"
+  ]
+}

@@ -7,22 +7,27 @@
 - أوامر سطر الأوامر (**CLI**) والمهام المجدولة (**Scheduler**).
 - متجر أدوات موقعة رقميًا (**Ed25519 Signed Marketplace**).
 
-## خطوات التشغيل السريع
+## تشغيل المشروع لأول مرة (Windows / Linux / macOS)
+
+**على Windows:** حمّل مستودع GitHub وفك الضغط، ثم اضغط مرتين على ملف `start-human2api.bat`. ستُنشأ بيئة Python خاصة بالمشروع وتُثبت المتطلبات وتُفتح لوحة التحكم في متصفحك تلقائيًا. يلزم Python 3.10 أو أحدث واتصال إنترنت للتثبيت الأول.
+
+**على Linux / macOS:**
 
 ```bash
-# 1. تثبيت الحزمة محليًا
-python3 -m pip install dist/human2api-0.5.0-py3-none-any.whl
-
-# 2. أو على أنظمة Debian/Ubuntu تثبيت حزمة DEB مباشرة
-sudo dpkg -i dist/human2api_0.5.0_all.deb
-
-# 3. تهيئة مساحة العمل وتشغيل الخادم والاستوديو البصري
-h2a init
-h2a serve --host 127.0.0.1 --port 8000
-
-# 4. تشغيل الفحص الهندسي الشامل وبناء الحزم وإصدار التقارير
-python3 scripts/complete.py --repair
+./start-human2api.sh
 ```
+
+**التشغيل من الطرفية يدويًا:**
+
+```bash
+python -m pip install -e ".[browser]"
+python -m playwright install chromium  # لو لم يكن Chromium موجودًا
+h2a start
+```
+
+الأمر `h2a start` يفتح Studio المحلي ويضيف مهمة تجريبية **Demo Invoice**. شغّلها بعد تفعيل الموافقة على عمليات الكتابة (Write Approval)، وستملأ بيانات داخل نموذج محلي تجريبي وتتحقق من النتيجة. ليست فاتورة مالية حقيقية.
+
+عند ظهور مشكلة في بيئة التشغيل، نفّذ `h2a doctor --json` لعرض تشخيص واضح. السيرفر المحلي يعمل دون Selenium، لكن أتمتة المتصفح تحتاج Selenium أو Playwright مع Chromium. اختبار Android الحقيقي يحتاج SDK وجهاز/محاكي، ولا يمكن اعتباره مُجتازًا بدون تلك البيئة.
 
 ## مثال إعداد عميل MCP
 
