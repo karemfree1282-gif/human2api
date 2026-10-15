@@ -9,7 +9,7 @@ setup(
     package_data={"human2api": ["static/*", "examples/*.json"]},
     include_package_data=True,
     python_requires=">=3.10",
-    install_requires=["cryptography>=41,<49"],
+    install_requires=["cryptography>=41,<51"],
     entry_points={
         "console_scripts": [
             "h2a=human2api.cli:main",
